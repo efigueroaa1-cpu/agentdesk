@@ -1,0 +1,870 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gantt P6 — AgentDesk</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#060f1c;--surface:#0a1828;--card:#0d2038;--card2:#111e33;
+  --border:rgba(0,212,255,.12);--border2:rgba(0,212,255,.25);
+  --accent:#00d4ff;--accent2:#0096b7;
+  --text:#a8c0da;--text-h:#ddeeff;--text-m:#3d5a78;
+  --ok:#00e58a;--warn:#f0a030;--danger:#ff3d60;--purple:#a78bfa;
+  --bar-normal:#0096b7;--bar-critica:#ff3d60;--bar-done:#00e58a;--bar-base:rgba(100,130,160,.3);
+  --mono:"Courier New",Courier,monospace;
+  --sans:"Segoe UI",system-ui,sans-serif;
+}
+html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--sans);font-size:14px}
+body{display:flex;flex-direction:column;overflow:hidden}
+
+.topbar{display:flex;align-items:center;gap:.8rem;padding:.6rem 1.2rem;background:var(--surface);border-bottom:1px solid var(--border2);flex-shrink:0;flex-wrap:wrap}
+.topbar .brand{font-family:var(--mono);font-size:.72rem;letter-spacing:.14em;text-transform:uppercase;color:var(--accent)}
+.topbar .brand span{color:var(--text-m);margin-left:.4rem}
+.tab-bar{display:flex;gap:.3rem}
+.tab{padding:.35rem .9rem;border-radius:4px;border:1px solid transparent;background:transparent;color:var(--text-m);font-size:.75rem;cursor:pointer;font-family:var(--mono);letter-spacing:.06em;text-transform:uppercase;transition:all .15s}
+.tab.active,.tab:hover{background:rgba(0,212,255,.1);color:var(--accent);border-color:var(--border2)}
+.btn{padding:.38rem .9rem;border-radius:4px;border:1px solid var(--border2);background:rgba(0,212,255,.08);color:var(--accent);font-size:.75rem;cursor:pointer;font-family:var(--mono);letter-spacing:.06em;transition:all .15s;white-space:nowrap}
+.btn:hover{background:rgba(0,212,255,.18)}
+.btn-ok{background:rgba(0,229,138,.1);border-color:rgba(0,229,138,.3);color:var(--ok)}
+.btn-ok:hover{background:rgba(0,229,138,.2)}
+.btn-danger{background:rgba(255,61,96,.08);border-color:rgba(255,61,96,.25);color:var(--danger)}
+.topbar-right{margin-left:auto;display:flex;gap:.5rem;align-items:center}
+
+/* ── Layout ── */
+.main{flex:1;overflow:hidden;display:flex;flex-direction:column}
+.panel{display:none;flex:1;overflow-y:auto;padding:1rem}
+.panel.active{display:flex;flex-direction:column;gap:.8rem}
+
+/* ── KPI row ── */
+.kpi-row{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:.6rem;flex-shrink:0}
+.kpi{background:var(--card);border:1px solid var(--border);border-radius:7px;padding:.8rem .9rem}
+.kpi .kl{font-family:var(--mono);font-size:.56rem;letter-spacing:.12em;text-transform:uppercase;color:var(--text-m);margin-bottom:.25rem}
+.kpi .kv{font-size:1.3rem;font-weight:700;font-family:var(--mono);color:var(--text-h)}
+.kpi .ks{font-size:.68rem;color:var(--text-m);margin-top:.1rem}
+.kpi.ok .kv{color:var(--ok)}
+.kpi.warn .kv{color:var(--warn)}
+.kpi.danger .kv{color:var(--danger)}
+
+/* ── Cards ── */
+.card{background:var(--card);border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.card-header{display:flex;align-items:center;justify-content:space-between;padding:.65rem 1rem;border-bottom:1px solid var(--border);background:var(--card2)}
+.card-header h3{font-family:var(--mono);font-size:.62rem;letter-spacing:.14em;text-transform:uppercase;color:var(--accent2)}
+.card-header h3::before{content:"// ";color:var(--text-m)}
+.card-actions{display:flex;gap:.4rem}
+.card-body{padding:.9rem}
+
+/* ── Gantt ── */
+.gantt-wrap{display:flex;overflow:auto;max-height:calc(100vh - 260px)}
+/* left pane: task list */
+.gantt-left{min-width:320px;max-width:320px;border-right:1px solid var(--border2);flex-shrink:0}
+.gantt-left-header{display:grid;grid-template-columns:1fr 70px 60px;background:var(--card2);border-bottom:1px solid var(--border2);font-family:var(--mono);font-size:.6rem;letter-spacing:.1em;text-transform:uppercase;color:var(--accent2)}
+.gantt-left-header div{padding:.5rem .6rem}
+.gantt-row-left{display:grid;grid-template-columns:1fr 70px 60px;align-items:center;border-bottom:1px solid rgba(0,212,255,.05);transition:background .1s}
+.gantt-row-left:hover{background:rgba(0,212,255,.04)}
+.gantt-row-left .task-name{padding:.45rem .6rem;font-size:.8rem;cursor:pointer;display:flex;align-items:center;gap:.4rem}
+.gantt-row-left .task-name.parent{font-weight:700;color:var(--text-h)}
+.gantt-row-left .task-name.child{padding-left:1.4rem;color:var(--text)}
+.gantt-row-left .task-dur{padding:.45rem .4rem;font-family:var(--mono);font-size:.7rem;color:var(--text-m);text-align:center}
+.gantt-row-left .task-pct{padding:.45rem .4rem;font-family:var(--mono);font-size:.7rem;text-align:center}
+.gantt-row-left.critica .task-name{color:var(--danger)}
+.gantt-row-left.done .task-name{color:var(--ok)}
+/* right pane: bars */
+.gantt-right{flex:1;overflow-x:auto;min-width:0}
+.gantt-header-row{display:flex;background:var(--card2);border-bottom:1px solid var(--border2);position:sticky;top:0;z-index:2}
+.gantt-month-cell{flex-shrink:0;border-right:1px solid var(--border);padding:.3rem .4rem;font-family:var(--mono);font-size:.6rem;letter-spacing:.08em;text-transform:uppercase;color:var(--accent2);text-align:center}
+.gantt-week-row{display:flex;background:var(--card2);border-bottom:1px solid var(--border2);position:sticky;top:26px;z-index:2}
+.gantt-week-cell{flex-shrink:0;border-right:1px solid rgba(0,212,255,.05);padding:.25rem 0;font-family:var(--mono);font-size:.58rem;color:var(--text-m);text-align:center}
+.gantt-bar-row{display:flex;align-items:center;height:35px;border-bottom:1px solid rgba(0,212,255,.05);position:relative}
+.gantt-bar-row:hover{background:rgba(0,212,255,.03)}
+.gantt-bar-row .today-line{position:absolute;top:0;bottom:0;width:2px;background:rgba(240,160,48,.6);z-index:1;pointer-events:none}
+.gantt-bar{position:absolute;height:16px;top:50%;transform:translateY(-50%);border-radius:3px;cursor:pointer;z-index:2;transition:opacity .15s}
+.gantt-bar:hover{opacity:.8;box-shadow:0 0 6px rgba(0,212,255,.4)}
+.gantt-bar.normal{background:var(--bar-normal)}
+.gantt-bar.critica{background:var(--bar-critica);box-shadow:0 0 4px rgba(255,61,96,.3)}
+.gantt-bar.done{background:var(--bar-done)}
+.gantt-bar.baseline{background:var(--bar-base);height:6px;top:75%}
+.gantt-bar .progress-fill{height:100%;border-radius:3px;background:rgba(255,255,255,.3)}
+.gantt-bar .bar-label{position:absolute;left:calc(100% + 4px);font-size:.65rem;white-space:nowrap;color:var(--text-m);top:50%;transform:translateY(-50%)}
+
+/* ── Tables ── */
+.tbl-wrap{overflow-x:auto;border-radius:6px;border:1px solid var(--border)}
+table{width:100%;border-collapse:collapse;font-size:.82rem}
+thead{background:var(--card2)}
+th{font-family:var(--mono);font-size:.6rem;letter-spacing:.1em;text-transform:uppercase;color:var(--accent2);padding:.6rem .8rem;text-align:left;font-weight:normal;border-bottom:1px solid var(--border2)}
+td{padding:.5rem .8rem;border-bottom:1px solid rgba(0,212,255,.05);color:var(--text);vertical-align:middle}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:rgba(0,212,255,.03)}
+.num{font-family:var(--mono);text-align:right}
+
+/* ── Chip ── */
+.chip{display:inline-block;font-family:var(--mono);font-size:.6rem;letter-spacing:.06em;text-transform:uppercase;padding:.15em .55em;border-radius:3px;font-weight:600}
+.chip-ok{background:rgba(0,229,138,.1);color:var(--ok);border:1px solid rgba(0,229,138,.25)}
+.chip-warn{background:rgba(240,160,48,.1);color:var(--warn);border:1px solid rgba(240,160,48,.25)}
+.chip-danger{background:rgba(255,61,96,.1);color:var(--danger);border:1px solid rgba(255,61,96,.25)}
+.chip-blue{background:rgba(0,212,255,.08);color:var(--accent);border:1px solid var(--border2)}
+.chip-purple{background:rgba(167,139,250,.1);color:var(--purple);border:1px solid rgba(167,139,250,.25)}
+
+/* ── Prog bar ── */
+.prog-bar{height:6px;background:var(--card2);border-radius:3px;overflow:hidden;margin-top:.25rem}
+.prog-fill{height:100%;border-radius:3px}
+
+/* ── AI ── */
+.ai-panel{background:var(--card);border:1px solid var(--border2);border-radius:8px;padding:.9rem}
+.ai-head{display:flex;align-items:center;gap:.6rem;margin-bottom:.6rem}
+.ai-badge{font-family:var(--mono);font-size:.6rem;letter-spacing:.1em;text-transform:uppercase;background:rgba(0,212,255,.1);border:1px solid var(--border2);color:var(--accent);padding:.2em .6em;border-radius:3px}
+#ai-out{min-height:70px;max-height:220px;overflow-y:auto;font-size:.83rem;line-height:1.7;color:var(--text);white-space:pre-wrap;word-break:break-word}
+#ai-out.empty{color:var(--text-m);font-style:italic}
+
+/* ── Modal ── */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:100;display:none;align-items:center;justify-content:center}
+.modal-overlay.open{display:flex}
+.modal{background:var(--card);border:1px solid var(--border2);border-radius:10px;padding:1.4rem;width:500px;max-width:92vw;max-height:90vh;overflow-y:auto}
+.modal h4{font-family:var(--mono);font-size:.68rem;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);margin-bottom:1rem}
+.form-row{display:flex;flex-direction:column;gap:.22rem;margin-bottom:.65rem}
+.form-row label{font-size:.72rem;color:var(--text-m)}
+.form-row input,.form-row select,.form-row textarea{background:var(--card2);border:1px solid var(--border2);border-radius:4px;color:var(--text-h);padding:.42rem .65rem;font-size:.82rem;font-family:var(--sans)}
+.form-row input:focus,.form-row select:focus{outline:none;border-color:var(--accent)}
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:.65rem}
+.modal-actions{display:flex;gap:.5rem;justify-content:flex-end;margin-top:1rem}
+
+canvas{display:block;width:100%}
+/* ── Tooltips ── */
+.tip-icon{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border-radius:50%;background:rgba(0,212,255,.12);border:1px solid rgba(0,212,255,.3);color:var(--accent);font-size:9px;font-weight:700;cursor:help;margin-left:5px;vertical-align:middle;flex-shrink:0;font-family:var(--mono);line-height:1}
+.tip-icon:hover::after{content:attr(data-tip);position:fixed;z-index:9999;left:50%;top:50%;transform:translate(-50%,-50%);background:#0f1f35;border:1px solid rgba(0,212,255,.4);border-radius:8px;color:#cbd5e1;font-size:11.5px;line-height:1.55;padding:9px 13px;max-width:260px;white-space:normal;pointer-events:none;box-shadow:0 6px 24px rgba(0,0,0,.6);font-family:var(--sans);font-weight:normal}
+/* ── Project selector ── */
+.project-sel{display:flex;align-items:center;gap:.4rem;background:var(--card);border:1px solid var(--border2);border-radius:5px;padding:.3rem .6rem}
+.project-sel label{font-family:var(--mono);font-size:.58rem;letter-spacing:.1em;text-transform:uppercase;color:var(--text-m);white-space:nowrap}
+.project-sel select{background:transparent;border:none;color:var(--text-h);font-size:.78rem;cursor:pointer;outline:none;max-width:160px}
+.project-sel select option{background:var(--card2)}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">AgentDesk <span>// Gantt P6</span></div>
+  <div class="project-sel">
+    <label>Proyecto</label>
+    <select id="sel-proyecto" onchange="cambiarProyecto(this.value)">
+      <option value="demo">Demo — Construcción Edificio</option>
+    </select>
+    <button class="btn" style="padding:.22rem .55rem;font-size:.65rem" onclick="nuevoProyecto()" title="Crear nuevo proyecto">+</button>
+    <button class="btn btn-danger" style="padding:.22rem .55rem;font-size:.65rem" onclick="eliminarProyecto()" title="Eliminar proyecto">✕</button>
+  </div>
+  <div class="tab-bar">
+    <button class="tab active" onclick="showPanel('gantt')">Diagrama Gantt</button>
+    <button class="tab" onclick="showPanel('wbs')">WBS</button>
+    <button class="tab" onclick="showPanel('recursos')">Recursos</button>
+    <button class="tab" onclick="showPanel('critica')">Ruta Crítica</button>
+    <button class="tab" onclick="showPanel('resumen')">Resumen</button>
+  </div>
+  <div class="topbar-right">
+    <button class="btn" onclick="abrirModalTarea()">+ Tarea</button>
+    <button class="btn btn-ok" onclick="analizarIA()">⚡ Analizar con IA</button>
+  </div>
+</div>
+
+<div class="main">
+
+<!-- ═══════════ GANTT ═══════════ -->
+<div class="panel active" id="panel-gantt">
+  <div class="kpi-row" id="kpi-gantt"></div>
+  <div class="card" style="flex:1">
+    <div class="card-header">
+      <h3>Diagrama de Gantt <span class="tip-icon" data-tip="Las barras representan la duración de cada tarea. Rojo = tarea en ruta crítica (si se retrasa, retrasa todo el proyecto). Verde = completada. La línea vertical ámbar = hoy. Haz clic en una tarea para editarla.">?</span></h3>
+      <div class="card-actions" style="align-items:center;gap:.6rem">
+        <label style="display:flex;align-items:center;gap:.3rem;font-size:.72rem;color:var(--text-m);cursor:pointer">
+          <input type="checkbox" id="chk-baseline" onchange="renderGantt()"> Línea base
+        </label>
+        <label style="display:flex;align-items:center;gap:.3rem;font-size:.72rem;color:var(--text-m);cursor:pointer">
+          <input type="checkbox" id="chk-critica" checked onchange="renderGantt()"> Ruta crítica
+        </label>
+        <select id="sel-zoom" onchange="renderGantt()" style="background:var(--card2);border:1px solid var(--border);color:var(--text);padding:.3rem .5rem;font-size:.72rem;border-radius:3px">
+          <option value="week">Semanas</option>
+          <option value="month">Meses</option>
+        </select>
+      </div>
+    </div>
+    <div class="card-body" style="padding:0">
+      <div class="gantt-wrap" id="gantt-wrap">
+        <div class="gantt-left">
+          <div class="gantt-left-header">
+            <div>Tarea</div><div>Duración</div><div>Avance</div>
+          </div>
+          <div id="gantt-left-rows"></div>
+        </div>
+        <div class="gantt-right" id="gantt-right">
+          <div id="gantt-header-months" class="gantt-header-row"></div>
+          <div id="gantt-header-weeks" class="gantt-week-row"></div>
+          <div id="gantt-bar-rows"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="ai-panel">
+    <div class="ai-head">
+      <span class="ai-badge">IA Proyectos</span>
+      <span style="font-size:.8rem;color:var(--text-m)">Análisis del cronograma y ruta crítica</span>
+    </div>
+    <div id="ai-out" class="empty">Haz clic en "⚡ Analizar con IA" para obtener un análisis del cronograma, alertas de retraso y recomendaciones de aceleración.</div>
+  </div>
+</div>
+
+<!-- ═══════════ WBS ═══════════ -->
+<div class="panel" id="panel-wbs">
+  <div class="card">
+    <div class="card-header">
+      <h3>Work Breakdown Structure</h3>
+      <div class="card-actions">
+        <button class="btn" onclick="abrirModalTarea()">+ Entregable</button>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr>
+            <th>Código WBS</th><th>Entregable / Tarea</th><th>Tipo</th>
+            <th>Duración</th><th>Inicio</th><th>Fin</th><th>Responsable</th><th>% Avance</th><th></th>
+          </tr></thead>
+          <tbody id="tbody-wbs"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ RECURSOS ═══════════ -->
+<div class="panel" id="panel-recursos">
+  <div class="card">
+    <div class="card-header">
+      <h3>Asignación de Recursos</h3>
+      <button class="btn" onclick="abrirModalRecurso()">+ Recurso</button>
+    </div>
+    <div class="card-body">
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr>
+            <th>Recurso</th><th>Tipo</th><th>Costo/día</th>
+            <th class="num">Días asignados</th><th class="num">Costo Total</th><th>Carga</th><th></th>
+          </tr></thead>
+          <tbody id="tbody-recursos"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-header"><h3>Carga de Recursos por Tarea</h3></div>
+    <div class="card-body">
+      <canvas id="chart-recursos" height="180"></canvas>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ RUTA CRÍTICA ═══════════ -->
+<div class="panel" id="panel-critica">
+  <div class="card">
+    <div class="card-header"><h3>Análisis de Ruta Crítica (CPM) <span class="tip-icon" data-tip="La ruta crítica son las tareas sin holgura: si cualquiera se atrasa 1 día, el proyecto completo se atrasa 1 día. Para que el CPM funcione, define predecesoras al crear las tareas (campo 'Predecesoras').">?</span></h3></div>
+    <div class="card-body" id="critica-content"></div>
+  </div>
+  <div class="card">
+    <div class="card-header"><h3>Holguras por Tarea</h3></div>
+    <div class="card-body">
+      <div class="tbl-wrap">
+        <table><thead><tr>
+          <th>Tarea</th><th class="num">Inicio Temp.</th><th class="num">Fin Temp.</th>
+          <th class="num">Inicio Tard.</th><th class="num">Fin Tard.</th><th class="num">Holgura Total</th><th>Estado</th>
+        </tr></thead><tbody id="tbody-critica"></tbody></table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ RESUMEN ═══════════ -->
+<div class="panel" id="panel-resumen">
+  <div class="kpi-row" id="kpi-resumen"></div>
+  <div class="grid2" style="display:grid;grid-template-columns:1fr 1fr;gap:.8rem">
+    <div class="card">
+      <div class="card-header"><h3>Estado por Fase</h3></div>
+      <div class="card-body" id="resumen-fases"></div>
+    </div>
+    <div class="card">
+      <div class="card-header"><h3>Indicadores EVM</h3></div>
+      <div class="card-body" id="evm-content"></div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-header"><h3>Curva S — Avance Acumulado</h3></div>
+    <div class="card-body"><canvas id="chart-curvaS" height="200"></canvas></div>
+  </div>
+</div>
+
+</div><!-- /main -->
+
+<!-- ═══════════ MODAL TAREA ═══════════ -->
+<div class="modal-overlay" id="modal-tarea">
+  <div class="modal">
+    <h4 id="modal-tarea-titulo">Nueva Tarea</h4>
+    <input type="hidden" id="m-t-idx" value="-1">
+    <div class="form-row"><label>Nombre de la tarea</label><input id="m-t-nombre" placeholder="Ej: Diseño de estructura"></div>
+    <div class="form-grid">
+      <div class="form-row"><label>Código WBS</label><input id="m-t-wbs" placeholder="1.1.1"></div>
+      <div class="form-row"><label>Fase / Entregable padre</label>
+        <select id="m-t-padre"><option value="">— Tarea raíz —</option></select>
+      </div>
+    </div>
+    <div class="form-grid">
+      <div class="form-row"><label>Fecha inicio</label><input id="m-t-ini" type="date"></div>
+      <div class="form-row"><label>Fecha fin (línea base)</label><input id="m-t-fin" type="date"></div>
+    </div>
+    <div class="form-grid">
+      <div class="form-row"><label>% Avance real (0–100)</label><input id="m-t-pct" type="number" min="0" max="100" placeholder="0"></div>
+      <div class="form-row"><label>Responsable</label><input id="m-t-resp" placeholder="Nombre o equipo"></div>
+    </div>
+    <div class="form-grid">
+      <div class="form-row"><label>Prioridad</label>
+        <select id="m-t-prio">
+          <option value="alta">Alta</option>
+          <option value="media" selected>Media</option>
+          <option value="baja">Baja</option>
+        </select>
+      </div>
+      <div class="form-row"><label>Predecesoras (índices, coma)</label><input id="m-t-pred" placeholder="Ej: 0,1"></div>
+    </div>
+    <div class="form-row"><label>Costo estimado ($)</label><input id="m-t-costo" type="number" placeholder="0"></div>
+    <div class="form-row"><label>Notas</label><textarea id="m-t-notas" rows="2" placeholder="Observaciones, riesgos..."></textarea></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="cerrarModal('modal-tarea')">Cancelar</button>
+      <button class="btn btn-ok" onclick="guardarTarea()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ MODAL RECURSO ═══════════ -->
+<div class="modal-overlay" id="modal-recurso">
+  <div class="modal">
+    <h4>Nuevo Recurso</h4>
+    <div class="form-row"><label>Nombre del recurso</label><input id="m-r-nombre" placeholder="Ej: Ing. Civil Estructural"></div>
+    <div class="form-grid">
+      <div class="form-row"><label>Tipo</label>
+        <select id="m-r-tipo">
+          <option>Humano</option><option>Equipo</option><option>Material</option><option>Subcontrato</option>
+        </select>
+      </div>
+      <div class="form-row"><label>Costo por día ($)</label><input id="m-r-costo" type="number" placeholder="0"></div>
+    </div>
+    <div class="form-row"><label>Tarea asignada</label>
+      <select id="m-r-tarea"><option value="">Sin tarea específica</option></select>
+    </div>
+    <div class="form-row"><label>Días asignados</label><input id="m-r-dias" type="number" placeholder="0"></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="cerrarModal('modal-recurso')">Cancelar</button>
+      <button class="btn btn-ok" onclick="guardarRecurso()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Gestión de Proyectos ────────────────────────────────────────────────
+const PROJECTS_KEY='ad-gantt-projects-v1';
+let currentProject='demo';
+function getPK(n){return 'ad-gantt-'+n;}
+function loadProjects(){let ns;try{ns=JSON.parse(localStorage.getItem(PROJECTS_KEY))||['demo'];}catch(e){ns=['demo'];}if(!ns.includes('demo'))ns.unshift('demo');return ns;}
+function saveProjects(ns){localStorage.setItem(PROJECTS_KEY,JSON.stringify(ns));}
+function buildProjectSelector(){
+  const sel=document.getElementById('sel-proyecto');
+  const ns=loadProjects();
+  sel.innerHTML=ns.map(n=>`<option value="${n}"${n===currentProject?' selected':''}>${n==='demo'?'Demo — Construcción Edificio':n}</option>`).join('');
+}
+function cambiarProyecto(name){currentProject=name;cargar();showPanel('gantt');}
+function nuevoProyecto(){
+  const name=prompt('Nombre del nuevo proyecto:'); if(!name||!name.trim()) return;
+  const safe=name.trim().replace(/[^a-zA-Z0-9ÁÉÍÓÚáéíóúñÑ _-]/g,''); if(!safe) return;
+  const ns=loadProjects(); if(!ns.includes(safe)){ns.push(safe);saveProjects(ns);}
+  currentProject=safe; S={tareas:[],recursos:[]}; guardar();
+  buildProjectSelector(); renderGantt();
+  alert(`Proyecto "${safe}" creado. Agrega tareas con el botón "+ Tarea".`);
+}
+function eliminarProyecto(){
+  if(currentProject==='demo'){alert('No puedes eliminar el proyecto Demo.');return;}
+  if(!confirm(`¿Eliminar "${currentProject}" y todas sus tareas?`)) return;
+  localStorage.removeItem(getPK(currentProject));
+  const ns=loadProjects().filter(n=>n!==currentProject); saveProjects(ns);
+  currentProject='demo'; buildProjectSelector(); cargar(); renderGantt();
+}
+
+// ── Estado ──────────────────────────────────────────────────────────────
+let S={tareas:[],recursos:[]};
+function cargar(){try{const s=localStorage.getItem(getPK(currentProject));S=s?JSON.parse(s):{tareas:[],recursos:[]};}catch(e){S={tareas:[],recursos:[]};}if(!S.tareas)S.tareas=[];if(!S.recursos)S.recursos=[];}
+function guardar(){localStorage.setItem(getPK(currentProject),JSON.stringify(S));}
+
+// ── Helpers ─────────────────────────────────────────────────────────────
+const fmt=v=>'$'+Math.round(v).toLocaleString('es-CL');
+function diasEntre(a,b){return Math.max(0,Math.round((new Date(b)-new Date(a))/(1000*60*60*24)));}
+function dateAdd(d,n){const r=new Date(d);r.setDate(r.getDate()+n);return r.toISOString().slice(0,10);}
+function chipPrio(p){const m={alta:['chip-danger','Alta'],media:['chip-warn','Media'],baja:['chip-ok','Baja']};const[c,l]=m[p]||['chip-blue','—'];return `<span class="chip ${c}">${l}</span>`;}
+function progBar(p,c='var(--accent)'){return `<div class="prog-bar"><div class="prog-fill" style="width:${Math.min(p,100)}%;background:${p>=100?'var(--ok)':p>80?'var(--warn)':c}"></div></div><small style="font-size:.65rem;color:var(--text-m)">${p.toFixed(0)}%</small>`;}
+
+// ── Calcular holguras CPM (simple) ──────────────────────────────────────
+function calcCPM(){
+  const n=S.tareas.length;
+  S.tareas.forEach((t,i)=>{
+    t.dur=diasEntre(t.ini,t.fin)||1;
+    t.ES=0; t.EF=0; t.LS=0; t.LF=0; t.float=0;
+  });
+  // forward pass (ES/EF)
+  S.tareas.forEach((t,i)=>{
+    const preds=(t.pred||[]).map(p=>parseInt(p)).filter(p=>!isNaN(p)&&p>=0&&p<i);
+    t.ES=preds.length?Math.max(...preds.map(p=>S.tareas[p].EF)):0;
+    t.EF=t.ES+t.dur;
+  });
+  const projEnd=S.tareas.length?Math.max(...S.tareas.map(t=>t.EF)):0;
+  // backward pass (LS/LF)
+  for(let i=n-1;i>=0;i--){
+    const t=S.tareas[i];
+    const succs=S.tareas.filter((s,j)=>(s.pred||[]).map(Number).includes(i));
+    t.LF=succs.length?Math.min(...succs.map(s=>s.LS)):projEnd;
+    t.LS=t.LF-t.dur;
+    t.float=t.LS-t.ES;
+    t.critica=t.float===0;
+  }
+}
+
+// ── Navegación ───────────────────────────────────────────────────────────
+function showPanel(id){
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.getElementById('panel-'+id).classList.add('active');
+  document.querySelectorAll('.tab').forEach(t=>{if(t.getAttribute('onclick')===`showPanel('${id}')`){t.classList.add('active');}});
+  calcCPM();
+  if(id==='gantt') renderGantt();
+  if(id==='wbs') renderWBS();
+  if(id==='recursos') renderRecursos();
+  if(id==='critica') renderCritica();
+  if(id==='resumen') renderResumen();
+}
+
+// ── Gantt ────────────────────────────────────────────────────────────────
+function renderGantt(){
+  calcCPM();
+  renderKPIGantt();
+  if(!S.tareas.length){
+    document.getElementById('gantt-left-rows').innerHTML='<div style="padding:1rem;color:var(--text-m);font-size:.82rem">Sin tareas. Haz clic en "+ Tarea" para comenzar.</div>';
+    document.getElementById('gantt-bar-rows').innerHTML='';
+    return;
+  }
+  const showBase=document.getElementById('chk-baseline').checked;
+  const showCrit=document.getElementById('chk-critica').checked;
+  const zoom=document.getElementById('sel-zoom').value;
+  // date range
+  const allDates=S.tareas.flatMap(t=>[t.ini,t.fin]);
+  let gStart=allDates.reduce((a,b)=>a<b?a:b);
+  let gEnd  =allDates.reduce((a,b)=>a>b?a:b);
+  gStart=dateAdd(gStart,-7); gEnd=dateAdd(gEnd,14);
+  const totalDays=diasEntre(gStart,gEnd);
+  const DAY_W=zoom==='week'?22:8;
+  const totalW=totalDays*DAY_W;
+  const today=new Date().toISOString().slice(0,10);
+  const todayX=diasEntre(gStart,today)*DAY_W;
+
+  // Build months header
+  let mHtml='',wHtml='';
+  let cur=new Date(gStart);
+  const endD=new Date(gEnd);
+  const meses=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+  while(cur<=endD){
+    if(zoom==='month'){
+      const daysInM=new Date(cur.getFullYear(),cur.getMonth()+1,0).getDate();
+      const w=daysInM*DAY_W;
+      mHtml+=`<div class="gantt-month-cell" style="width:${w}px">${meses[cur.getMonth()]} ${cur.getFullYear()}</div>`;
+      cur.setMonth(cur.getMonth()+1); cur.setDate(1);
+    } else {
+      // weekly: 7 days per cell
+      mHtml+=`<div class="gantt-week-cell" style="flex-shrink:0;width:${7*DAY_W}px;border-right:1px solid var(--border);font-family:var(--mono);font-size:.6rem;color:var(--accent2);padding:.3rem .4rem">${cur.toISOString().slice(5,10)}</div>`;
+      cur.setDate(cur.getDate()+7);
+    }
+  }
+  document.getElementById('gantt-header-months').innerHTML=mHtml;
+  document.getElementById('gantt-header-weeks').style.display=zoom==='week'?'none':'flex';
+
+  // left + bar rows
+  let leftHtml='', barHtml='';
+  S.tareas.forEach((t,i)=>{
+    const isDone=t.avance>=100;
+    const cls=isDone?'done':(showCrit&&t.critica?'critica':'');
+    const pct=t.avance||0;
+    leftHtml+=`<div class="gantt-row-left ${cls}" style="min-height:35px">
+      <div class="task-name ${t.padre===''||t.padre===undefined?'parent':'child'}" onclick="editarTarea(${i})">
+        ${cls==='critica'?'⚡':''}${t.wbs?`<span style="font-family:var(--mono);font-size:.65rem;color:var(--text-m);margin-right:.3rem">${t.wbs}</span>`:''}${t.nombre}
+      </div>
+      <div class="task-dur">${t.dur}d</div>
+      <div class="task-pct" style="color:${isDone?'var(--ok)':t.avance>0?'var(--warn)':'var(--text-m)'}">${pct}%</div>
+    </div>`;
+
+    const x=diasEntre(gStart,t.ini)*DAY_W;
+    const w=Math.max(t.dur*DAY_W,4);
+    const barCls=isDone?'done':(showCrit&&t.critica?'critica':'normal');
+    const fillW=pct+'%';
+    barHtml+=`<div class="gantt-bar-row" style="width:${totalW}px;min-height:35px">
+      <div class="today-line" style="left:${todayX}px"></div>
+      <div class="gantt-bar ${barCls}" style="left:${x}px;width:${w}px" title="${t.nombre} (${pct}%)">
+        <div class="progress-fill" style="width:${fillW}"></div>
+      </div>
+      ${showBase?`<div class="gantt-bar baseline" style="left:${x}px;width:${w}px"></div>`:''}
+    </div>`;
+  });
+  document.getElementById('gantt-left-rows').innerHTML=leftHtml;
+  document.getElementById('gantt-bar-rows').innerHTML=barHtml;
+  document.getElementById('gantt-right').style.minWidth=totalW+'px';
+}
+function renderKPIGantt(){
+  calcCPM();
+  const n=S.tareas.length;
+  const hechas=S.tareas.filter(t=>t.avance>=100).length;
+  const enCurso=S.tareas.filter(t=>t.avance>0&&t.avance<100).length;
+  const criticas=S.tareas.filter(t=>t.critica).length;
+  const avgPct=n?S.tareas.reduce((a,t)=>a+t.avance,0)/n:0;
+  const today=new Date().toISOString().slice(0,10);
+  const retrasadas=S.tareas.filter(t=>t.fin<today&&t.avance<100).length;
+  const costoTotal=S.tareas.reduce((a,t)=>a+(t.costo||0),0);
+  document.getElementById('kpi-gantt').innerHTML=[
+    {l:'Tareas',v:n,s:'registradas',c:''},
+    {l:'Completadas',v:hechas,s:`de ${n}`,c:'ok'},
+    {l:'En Curso',v:enCurso,s:'activas',c:'warn'},
+    {l:'Retrasadas',v:retrasadas,s:'fuera de plazo',c:retrasadas?'danger':''},
+    {l:'Ruta Crítica',v:criticas,s:'tareas críticas',c:criticas>0?'danger':''},
+    {l:'Avance Prom.',v:avgPct.toFixed(0)+'%',s:'del proyecto',c:avgPct>80?'ok':avgPct>40?'warn':'danger'},
+  ].map(k=>`<div class="kpi ${k.c}"><div class="kl">${k.l}</div><div class="kv">${k.v}</div><div class="ks">${k.s}</div></div>`).join('');
+}
+
+// ── WBS ──────────────────────────────────────────────────────────────────
+function renderWBS(){
+  const tbody=document.getElementById('tbody-wbs');
+  tbody.innerHTML=S.tareas.map((t,i)=>{
+    const dur=t.dur||diasEntre(t.ini,t.fin)||1;
+    const cls=t.avance>=100?'chip-ok':t.avance>0?'chip-warn':'chip-blue';
+    const lbl=t.avance>=100?'Completada':t.avance>0?'En curso':'Pendiente';
+    return `<tr>
+      <td><span class="chip chip-blue">${t.wbs||'—'}</span></td>
+      <td style="${!t.padre?'font-weight:600;color:var(--text-h)':'padding-left:1.2rem'}">${t.nombre}</td>
+      <td>${chipPrio(t.prio)}</td>
+      <td style="font-family:var(--mono)">${dur}d</td>
+      <td style="font-family:var(--mono);font-size:.78rem">${t.ini||'—'}</td>
+      <td style="font-family:var(--mono);font-size:.78rem">${t.fin||'—'}</td>
+      <td style="color:var(--text-m)">${t.resp||'—'}</td>
+      <td>${progBar(t.avance||0)}</td>
+      <td>
+        <button class="btn" style="padding:.2rem .45rem;font-size:.65rem" onclick="editarTarea(${i})">✎</button>
+        <button class="btn btn-danger" style="padding:.2rem .45rem;font-size:.65rem" onclick="eliminarTarea(${i})">✕</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+// ── Recursos ─────────────────────────────────────────────────────────────
+function renderRecursos(){
+  const tbody=document.getElementById('tbody-recursos');
+  tbody.innerHTML=S.recursos.map((r,i)=>{
+    const total=(r.costo||0)*(r.dias||0);
+    const carga=r.dias>30?'Alta':r.dias>15?'Media':'Normal';
+    const cls=r.dias>30?'chip-danger':r.dias>15?'chip-warn':'chip-ok';
+    return `<tr>
+      <td style="font-weight:600;color:var(--text-h)">${r.nombre}</td>
+      <td><span class="chip chip-blue">${r.tipo}</span></td>
+      <td class="num">${fmt(r.costo||0)}</td>
+      <td class="num">${r.dias||0}</td>
+      <td class="num ok">${fmt(total)}</td>
+      <td><span class="chip ${cls}">${carga}</span></td>
+      <td><button class="btn btn-danger" style="padding:.2rem .45rem;font-size:.65rem" onclick="eliminarRecurso(${i})">✕</button></td>
+    </tr>`;
+  }).join('');
+  dibujarRecursos();
+}
+function dibujarRecursos(){
+  const c=document.getElementById('chart-recursos'); if(!c) return;
+  const ctx=c.getContext('2d');
+  const W=c.offsetWidth||600; const H=180;
+  c.width=W; c.height=H; ctx.clearRect(0,0,W,H);
+  if(!S.recursos.length){ ctx.fillStyle='rgba(168,192,218,.3)'; ctx.font='12px sans-serif'; ctx.fillText('Sin recursos registrados',W/2-80,H/2); return; }
+  const vals=S.recursos.map(r=>(r.costo||0)*(r.dias||0));
+  const maxV=Math.max(...vals,1);
+  const bw=Math.floor((W-60)/S.recursos.length*0.6);
+  const gap=(W-60)/S.recursos.length;
+  S.recursos.forEach((r,i)=>{
+    const x=40+i*gap+gap/2;
+    const h=vals[i]/maxV*(H-50);
+    const y=H-30-h;
+    const hue=i*37%360;
+    ctx.fillStyle=`hsla(${hue},70%,55%,.6)`;
+    ctx.fillRect(x-bw/2,y,bw,h);
+    ctx.fillStyle='rgba(168,192,218,.5)'; ctx.font='8px monospace';
+    const lbl=r.nombre.length>10?r.nombre.slice(0,10)+'…':r.nombre;
+    ctx.fillText(lbl,x-bw/2,H-15);
+    if(vals[i]>0){ ctx.fillStyle='rgba(168,192,218,.7)'; ctx.fillText(fmt(vals[i]),x-bw/2,y-4); }
+  });
+}
+
+// ── Ruta crítica ──────────────────────────────────────────────────────────
+function renderCritica(){
+  calcCPM();
+  const criticas=S.tareas.filter(t=>t.critica);
+  document.getElementById('critica-content').innerHTML=criticas.length?`
+    <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:.7rem">
+      ${criticas.map(t=>`<div style="background:rgba(255,61,96,.08);border:1px solid rgba(255,61,96,.25);border-radius:5px;padding:.5rem .7rem;font-size:.8rem">
+        <span style="color:var(--danger);font-weight:600">⚡ ${t.nombre}</span>
+        <span style="color:var(--text-m);margin-left:.5rem;font-family:var(--mono);font-size:.7rem">${t.dur}d</span>
+      </div>`).join('')}
+    </div>
+    <p style="color:var(--text-m);font-size:.8rem">La ruta crítica tiene <strong style="color:var(--danger)">${criticas.length} tareas</strong> con holgura 0. Cualquier retraso en ellas retrasa el proyecto completo.</p>
+  `:`<p style="color:var(--text-m);font-size:.82rem">Agrega al menos 2 tareas con predecesoras para calcular la ruta crítica.</p>`;
+  document.getElementById('tbody-critica').innerHTML=S.tareas.map(t=>`<tr>
+    <td style="${t.critica?'color:var(--danger);font-weight:600':''}">
+      ${t.critica?'⚡ ':''} ${t.nombre}
+    </td>
+    <td class="num" style="font-family:var(--mono)">${t.ES??'—'}</td>
+    <td class="num" style="font-family:var(--mono)">${t.EF??'—'}</td>
+    <td class="num" style="font-family:var(--mono)">${t.LS??'—'}</td>
+    <td class="num" style="font-family:var(--mono)">${t.LF??'—'}</td>
+    <td class="num"><span class="chip ${t.float===0?'chip-danger':t.float<5?'chip-warn':'chip-ok'}">${t.float??'—'}d</span></td>
+    <td><span class="chip ${t.critica?'chip-danger':t.avance>=100?'chip-ok':'chip-blue'}">${t.critica?'Crítica':t.avance>=100?'OK':'Holgura'}</span></td>
+  </tr>`).join('');
+}
+
+// ── Resumen / EVM ─────────────────────────────────────────────────────────
+function renderResumen(){
+  calcCPM();
+  const n=S.tareas.length;
+  const costoTotal=S.tareas.reduce((a,t)=>a+(t.costo||0),0);
+  const avanceProm=n?S.tareas.reduce((a,t)=>a+(t.avance||0),0)/n:0;
+  // EVM: BAC=presupuesto total, PV=% tiempo transcurrido * BAC, EV=% avance real * BAC, AC=costo real (simulado)
+  const BAC=costoTotal;
+  const hoy=new Date();
+  const minIni=S.tareas.length?S.tareas.map(t=>new Date(t.ini)).reduce((a,b)=>a<b?a:b):hoy;
+  const maxFin=S.tareas.length?S.tareas.map(t=>new Date(t.fin)).reduce((a,b)=>a>b?a:b):hoy;
+  const durTotal=diasEntre(minIni.toISOString().slice(0,10),maxFin.toISOString().slice(0,10))||1;
+  const durTrans=Math.min(diasEntre(minIni.toISOString().slice(0,10),hoy.toISOString().slice(0,10)),durTotal);
+  const PV=BAC*(durTrans/durTotal);
+  const EV=BAC*(avanceProm/100);
+  const AC=EV*1.1; // simulación: 10% sobrecosto
+  const SV=EV-PV; const CV=EV-AC;
+  const SPI=PV>0?EV/PV:1; const CPI=AC>0?EV/AC:1;
+  const EAC=CPI>0?BAC/CPI:BAC;
+  document.getElementById('kpi-resumen').innerHTML=[
+    {l:'BAC',v:fmt(BAC),s:'Presupuesto total',c:''},
+    {l:'EV',v:fmt(EV),s:'Valor ganado',c:'ok'},
+    {l:'PV',v:fmt(PV),s:'Valor planificado',c:''},
+    {l:'SPI',v:SPI.toFixed(2),s:SPI>=1?'En plazo':'Retrasado',c:SPI>=1?'ok':'danger'},
+    {l:'CPI',v:CPI.toFixed(2),s:CPI>=1?'Bajo presupuesto':'Sobrecosto',c:CPI>=1?'ok':'danger'},
+    {l:'EAC',v:fmt(EAC),s:'Costo estimado final',c:EAC>BAC?'danger':'ok'},
+  ].map(k=>`<div class="kpi ${k.c}"><div class="kl">${k.l}</div><div class="kv">${k.v}</div><div class="ks">${k.s}</div></div>`).join('');
+  // fases
+  const fases=[...new Set(S.tareas.filter(t=>!t.padre).map(t=>t.nombre))];
+  document.getElementById('resumen-fases').innerHTML=fases.length?fases.map(f=>{
+    const sub=S.tareas.filter(t=>t.padre===f);
+    const avg=sub.length?sub.reduce((a,t)=>a+t.avance,0)/sub.length:0;
+    return `<div style="margin-bottom:.7rem">
+      <div style="display:flex;justify-content:space-between;margin-bottom:.2rem">
+        <span style="font-size:.82rem;color:var(--text-h)">${f}</span>
+        <span style="font-family:var(--mono);font-size:.7rem;color:var(--text-m)">${sub.length} tareas</span>
+      </div>
+      ${progBar(avg)}
+    </div>`;
+  }).join(''):`<p style="color:var(--text-m);font-size:.82rem">Sin fases. Agrega tareas raíz para ver el desglose.</p>`;
+  // EVM indicators
+  document.getElementById('evm-content').innerHTML=`
+    <div style="display:flex;flex-direction:column;gap:.5rem">
+      ${[
+        {l:'Variación de Plazo (SV)',v:fmt(SV),ok:SV>=0,pct:(SV/BAC*100).toFixed(1)+'%'},
+        {l:'Variación de Costo (CV)',v:fmt(CV),ok:CV>=0,pct:(CV/BAC*100).toFixed(1)+'%'},
+        {l:'Avance Real',v:avanceProm.toFixed(1)+'%',ok:avanceProm>=50,pct:''},
+        {l:'Duración total proyecto',v:durTotal+'d',ok:true,pct:''},
+      ].map(r=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:.5rem .7rem;background:var(--card2);border-radius:5px;border:1px solid var(--border)">
+        <span style="font-size:.8rem">${r.l}</span>
+        <span class="chip ${r.ok?'chip-ok':'chip-danger'}">${r.v}</span>
+      </div>`).join('')}
+    </div>`;
+  dibujarCurvaS(avanceProm/100,durTrans/durTotal);
+}
+function dibujarCurvaS(realPct,timePct){
+  const c=document.getElementById('chart-curvaS'); if(!c) return;
+  const ctx=c.getContext('2d');
+  const W=c.offsetWidth||600; const H=200;
+  c.width=W; c.height=H; ctx.clearRect(0,0,W,H);
+  const pts=20;
+  const toX=i=>40+i*(W-50)/pts;
+  const toY=v=>H-30-(v*(H-50));
+  // S-curve planned (logistic)
+  const planned=Array.from({length:pts+1},(_,i)=>1/(1+Math.exp(-10*(i/pts-.5))));
+  const maxP=planned[pts];
+  const plannedN=planned.map(v=>v/maxP);
+  // actual (linear up to current)
+  const actualN=Array.from({length:pts+1},(_,i)=>{const t=i/pts;return t<=timePct?realPct*(t/timePct):null;});
+  // grid
+  ctx.strokeStyle='rgba(0,212,255,.05)'; ctx.lineWidth=1;
+  [0,.25,.5,.75,1].forEach(f=>{const y=toY(f);ctx.beginPath();ctx.moveTo(40,y);ctx.lineTo(W-10,y);ctx.stroke();ctx.fillStyle='rgba(168,192,218,.35)';ctx.font='9px monospace';ctx.fillText((f*100).toFixed(0)+'%',2,y+3);});
+  // planned line
+  ctx.beginPath(); ctx.strokeStyle='rgba(0,212,255,.5)'; ctx.lineWidth=2; ctx.setLineDash([5,4]);
+  plannedN.forEach((v,i)=>{if(i===0)ctx.moveTo(toX(i),toY(v));else ctx.lineTo(toX(i),toY(v));});
+  ctx.stroke(); ctx.setLineDash([]);
+  // actual line
+  ctx.beginPath(); ctx.strokeStyle='#00e58a'; ctx.lineWidth=2.5;
+  let started=false;
+  actualN.forEach((v,i)=>{if(v===null)return;if(!started){ctx.moveTo(toX(i),toY(v));started=true;}else ctx.lineTo(toX(i),toY(v));});
+  ctx.stroke();
+  // leyenda
+  ctx.strokeStyle='rgba(0,212,255,.6)'; ctx.lineWidth=2; ctx.setLineDash([5,4]);
+  ctx.beginPath(); ctx.moveTo(W-120,12); ctx.lineTo(W-105,12); ctx.stroke(); ctx.setLineDash([]);
+  ctx.fillStyle='rgba(168,192,218,.7)'; ctx.font='9px monospace'; ctx.fillText('Planificado',W-103,16);
+  ctx.strokeStyle='#00e58a'; ctx.lineWidth=2.5; ctx.setLineDash([]);
+  ctx.beginPath(); ctx.moveTo(W-120,26); ctx.lineTo(W-105,26); ctx.stroke();
+  ctx.fillText('Real',W-103,30);
+}
+
+// ── CRUD Tareas ────────────────────────────────────────────────────────────
+function abrirModalTarea(){
+  document.getElementById('m-t-idx').value=-1;
+  document.getElementById('modal-tarea-titulo').textContent='Nueva Tarea';
+  ['m-t-nombre','m-t-wbs','m-t-resp','m-t-notas','m-t-pred'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('m-t-ini').value=new Date().toISOString().slice(0,10);
+  document.getElementById('m-t-fin').value=dateAdd(new Date().toISOString().slice(0,10),14);
+  document.getElementById('m-t-pct').value='0';
+  document.getElementById('m-t-costo').value='0';
+  document.getElementById('m-t-prio').value='media';
+  poblarPadreSelect();
+  document.getElementById('modal-tarea').classList.add('open');
+}
+function editarTarea(i){
+  const t=S.tareas[i];
+  document.getElementById('m-t-idx').value=i;
+  document.getElementById('modal-tarea-titulo').textContent='Editar Tarea';
+  document.getElementById('m-t-nombre').value=t.nombre;
+  document.getElementById('m-t-wbs').value=t.wbs||'';
+  document.getElementById('m-t-ini').value=t.ini;
+  document.getElementById('m-t-fin').value=t.fin;
+  document.getElementById('m-t-pct').value=t.avance||0;
+  document.getElementById('m-t-resp').value=t.resp||'';
+  document.getElementById('m-t-prio').value=t.prio||'media';
+  document.getElementById('m-t-pred').value=(t.pred||[]).join(',');
+  document.getElementById('m-t-costo').value=t.costo||0;
+  document.getElementById('m-t-notas').value=t.notas||'';
+  poblarPadreSelect(t.padre);
+  document.getElementById('modal-tarea').classList.add('open');
+}
+function guardarTarea(){
+  const idx=parseInt(document.getElementById('m-t-idx').value);
+  const nombre=document.getElementById('m-t-nombre').value.trim(); if(!nombre) return;
+  const tarea={
+    nombre,
+    wbs:document.getElementById('m-t-wbs').value.trim(),
+    padre:document.getElementById('m-t-padre').value,
+    ini:document.getElementById('m-t-ini').value,
+    fin:document.getElementById('m-t-fin').value,
+    avance:parseInt(document.getElementById('m-t-pct').value)||0,
+    resp:document.getElementById('m-t-resp').value.trim(),
+    prio:document.getElementById('m-t-prio').value,
+    pred:document.getElementById('m-t-pred').value.split(',').map(s=>s.trim()).filter(Boolean),
+    costo:parseFloat(document.getElementById('m-t-costo').value)||0,
+    notas:document.getElementById('m-t-notas').value.trim(),
+  };
+  tarea.dur=diasEntre(tarea.ini,tarea.fin)||1;
+  if(idx>=0) S.tareas[idx]=tarea; else S.tareas.push(tarea);
+  guardar(); cerrarModal('modal-tarea'); showPanel('gantt');
+}
+function eliminarTarea(i){ S.tareas.splice(i,1); guardar(); renderWBS(); }
+function poblarPadreSelect(cur=''){
+  const sel=document.getElementById('m-t-padre');
+  sel.innerHTML='<option value="">— Tarea raíz —</option>'+S.tareas.filter(t=>!t.padre).map(t=>`<option value="${t.nombre}">${t.nombre}</option>`).join('');
+  sel.value=cur||'';
+}
+
+// ── CRUD Recursos ──────────────────────────────────────────────────────────
+function abrirModalRecurso(){
+  ['m-r-nombre','m-r-dias'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('m-r-costo').value='0';
+  document.getElementById('m-r-tarea').innerHTML='<option value="">Sin tarea específica</option>'+S.tareas.map(t=>`<option value="${t.nombre}">${t.nombre}</option>`).join('');
+  document.getElementById('modal-recurso').classList.add('open');
+}
+function guardarRecurso(){
+  const nombre=document.getElementById('m-r-nombre').value.trim(); if(!nombre) return;
+  S.recursos.push({
+    nombre,
+    tipo:document.getElementById('m-r-tipo').value,
+    costo:parseFloat(document.getElementById('m-r-costo').value)||0,
+    tarea:document.getElementById('m-r-tarea').value,
+    dias:parseInt(document.getElementById('m-r-dias').value)||0,
+  });
+  guardar(); cerrarModal('modal-recurso'); renderRecursos();
+}
+function eliminarRecurso(i){ S.recursos.splice(i,1); guardar(); renderRecursos(); }
+
+// ── IA ─────────────────────────────────────────────────────────────────────
+async function analizarIA(){
+  const out=document.getElementById('ai-out');
+  out.classList.remove('empty'); out.textContent='Analizando cronograma...';
+  calcCPM();
+  const criticas=S.tareas.filter(t=>t.critica).map(t=>t.nombre);
+  const retrasadas=S.tareas.filter(t=>t.fin<new Date().toISOString().slice(0,10)&&t.avance<100).map(t=>t.nombre);
+  const ctx=`CRONOGRAMA DE PROYECTO (${S.tareas.length} tareas):
+- Tareas registradas: ${S.tareas.length}
+- Completadas: ${S.tareas.filter(t=>t.avance>=100).length}
+- En curso: ${S.tareas.filter(t=>t.avance>0&&t.avance<100).length}
+- Avance promedio: ${S.tareas.length?Math.round(S.tareas.reduce((a,t)=>a+t.avance,0)/S.tareas.length):0}%
+- Tareas en ruta crítica: ${criticas.join(', ')||'Ninguna identificada'}
+- Tareas retrasadas: ${retrasadas.join(', ')||'Ninguna'}
+- Presupuesto total: $${S.tareas.reduce((a,t)=>a+(t.costo||0),0).toLocaleString('es-CL')} CLP
+- Recursos asignados: ${S.recursos.length}
+
+Analiza el estado del proyecto: identifica riesgos de cronograma, tareas críticas en peligro, recomendaciones de aceleración y diagnóstico de EVM (SPI/CPI).`;
+  try{
+    const resp=await fetch('http://127.0.0.1:8000/chat/stream?agente_id=agente_proyectos_01&mensaje='+encodeURIComponent(ctx));
+    const reader=resp.body.getReader(); const dec=new TextDecoder(); let buf=''; out.textContent='';
+    while(true){
+      const{done,value}=await reader.read(); if(done) break;
+      buf+=dec.decode(value,{stream:true});
+      const lines=buf.split('\n'); buf=lines.pop();
+      for(const line of lines){
+        if(!line.startsWith('data:')) continue;
+        const d=line.slice(5).trim();
+        if(d==='[FIN]'||d==='[DONE]') break;
+        try{const j=JSON.parse(d);if(j.token)out.textContent+=j.token;}catch(e){}
+      }
+    }
+  }catch(e){out.textContent='Error al conectar con el agente IA.\n'+e.message;}
+}
+
+// ── Modales ────────────────────────────────────────────────────────────────
+function cerrarModal(id){document.getElementById(id).classList.remove('open');}
+document.querySelectorAll('.modal-overlay').forEach(m=>m.addEventListener('click',e=>{if(e.target===m)m.classList.remove('open');}));
+
+// ── Init ───────────────────────────────────────────────────────────────────
+buildProjectSelector();
+cargar();
+// Demo si vacío (solo proyecto 'demo')
+if(currentProject==='demo' && !S.tareas.length){
+  S.tareas=[
+    {nombre:'Ingeniería y Diseño',wbs:'1',padre:'',ini:'2026-06-01',fin:'2026-06-30',avance:100,resp:'Equipo Ingeniería',prio:'alta',pred:[],costo:8000000,notas:''},
+    {nombre:'Diseño Estructural',wbs:'1.1',padre:'Ingeniería y Diseño',ini:'2026-06-01',fin:'2026-06-15',avance:100,resp:'Ing. Estructural',prio:'alta',pred:[],costo:4000000,notas:''},
+    {nombre:'Diseño Eléctrico',wbs:'1.2',padre:'Ingeniería y Diseño',ini:'2026-06-10',fin:'2026-06-30',avance:100,resp:'Ing. Eléctrico',prio:'alta',pred:['0'],costo:4000000,notas:''},
+    {nombre:'Fundaciones',wbs:'2',padre:'',ini:'2026-07-01',fin:'2026-07-31',avance:65,resp:'Constructora A',prio:'alta',pred:['0'],costo:15000000,notas:'Lluvia generó retrasos'},
+    {nombre:'Excavación',wbs:'2.1',padre:'Fundaciones',ini:'2026-07-01',fin:'2026-07-10',avance:100,resp:'Constructora A',prio:'alta',pred:['0'],costo:5000000,notas:''},
+    {nombre:'Hormigonado',wbs:'2.2',padre:'Fundaciones',ini:'2026-07-11',fin:'2026-07-31',avance:40,resp:'Constructora A',prio:'alta',pred:['3','4'],costo:10000000,notas:'Riesgo retraso por clima'},
+    {nombre:'Estructura Metálica',wbs:'3',padre:'',ini:'2026-08-01',fin:'2026-08-31',avance:0,resp:'Metal S.A.',prio:'alta',pred:['3'],costo:22000000,notas:''},
+    {nombre:'Instalaciones',wbs:'4',padre:'',ini:'2026-09-01',fin:'2026-09-30',avance:0,resp:'Multi-técnica',prio:'media',pred:['6'],costo:18000000,notas:''},
+    {nombre:'Terminaciones',wbs:'5',padre:'',ini:'2026-10-01',fin:'2026-10-31',avance:0,resp:'Terminaciones Ltda.',prio:'baja',pred:['7'],costo:12000000,notas:''},
+    {nombre:'Puesta en Marcha',wbs:'6',padre:'',ini:'2026-11-01',fin:'2026-11-15',avance:0,resp:'Gerencia Proyecto',prio:'alta',pred:['8'],costo:5000000,notas:''},
+  ];
+  S.tareas.forEach(t=>{ t.dur=diasEntre(t.ini,t.fin)||1; });
+  S.recursos=[
+    {nombre:'Director de Proyecto',tipo:'Humano',costo:180000,tarea:'Ingeniería y Diseño',dias:45},
+    {nombre:'Ing. Estructural',tipo:'Humano',costo:120000,tarea:'Diseño Estructural',dias:15},
+    {nombre:'Ing. Eléctrico',tipo:'Humano',costo:110000,tarea:'Diseño Eléctrico',dias:20},
+    {nombre:'Grúa Torre 50T',tipo:'Equipo',costo:350000,tarea:'Estructura Metálica',dias:30},
+    {nombre:'Subcontrato Hormigón',tipo:'Subcontrato',costo:0,tarea:'Hormigonado',dias:21},
+  ];
+  guardar();
+}
+calcCPM();
+renderGantt();
+</script>
+</body>
+</html>
