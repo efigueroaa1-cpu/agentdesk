@@ -170,6 +170,7 @@ export {
 
   // ── Miscelánea UI ─────────────────────────────────────────────────────────
   Bookmark,
+  Briefcase,
   Circle,
   Columns,
   DivideCircle,
@@ -178,6 +179,7 @@ export {
   Hash,
   Layers,
   Layout,
+  LayoutDashboard,
   List,
   Package,
   Palette,
