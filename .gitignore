@@ -1,0 +1,25 @@
+# Node
+node_modules/
+
+# Generados por build — NUNCA se versionan ni se editan a mano
+dist/
+build/
+react_dist/
+agentdesk-dashboard/dist/
+agentdesk-dashboard/src-tauri/target/
+agentdesk-dashboard/src-tauri/gen/
+agentdesk-dashboard/src-tauri/resources/AgentDesk/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Secretos y locales
+.env
+jwt_secret.key
+
+# Artefactos y backups de parches (prohibidos por criterio de aceptación)
+*.bak*
+*.exe
+RELEASE/

@@ -1,0 +1,94 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Tema Cyberpunk (por defecto) ─────────────────────────────────────────── */
+:root {
+  --t-bg-deep:     #020818;
+  --t-bg-base:     #060d24;
+  --t-bg-surface:  #0d1a3e;
+  --t-border:      rgba(0,212,255,.12);
+  --t-accent:      #00d4ff;
+  --t-accent-dim:  rgba(0,212,255,.15);
+  --t-accent-glow: rgba(0,212,255,.35);
+  --t-text:        #e2efff;
+  --t-text-muted:  #4a7095;
+  --t-danger:      #ff2d55;
+  --t-success:     #00ff9d;
+  --t-warning:     #f59e0b;
+}
+
+/* ── Tema Corporate (clase .corporate en <html>) ──────────────────────────── */
+.corporate {
+  --t-bg-deep:     #f8fafc;
+  --t-bg-base:     #ffffff;
+  --t-bg-surface:  #f1f5f9;
+  --t-border:      rgba(37,99,235,.14);
+  --t-accent:      #2563eb;
+  --t-accent-dim:  rgba(37,99,235,.12);
+  --t-accent-glow: rgba(37,99,235,.25);
+  --t-text:        #1e293b;
+  --t-text-muted:  #64748b;
+  --t-danger:      #dc2626;
+  --t-success:     #16a34a;
+  --t-warning:     #d97706;
+}
+
+/* ── Reset ───────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; height: 100%; }
+body {
+  font-family: "JetBrains Mono", "Fira Code", "Inter", system-ui, monospace;
+  background: var(--t-bg-deep);
+  color: var(--t-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+#root { height: 100%; }
+
+/* ── Glassmorphism helpers ───────────────────────────────────────────────── */
+.glass {
+  background: rgba(6,15,35,0.82);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(0,212,255,.12);
+}
+
+.glass-light {
+  background: rgba(255,255,255,0.06);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255,255,255,.08);
+}
+
+.glass-modal {
+  background: rgba(6,18,38,0.92);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(0,212,255,.2);
+  box-shadow: 0 24px 64px rgba(0,0,0,.6), 0 0 0 1px rgba(0,212,255,.08);
+}
+
+/* ── Scrollbars ──────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(0,212,255,.2); border-radius: 9999px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(0,212,255,.4); }
+
+/* ── Animaciones globales ────────────────────────────────────────────────── */
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 8px rgba(0,212,255,.3); }
+  50% { box-shadow: 0 0 20px rgba(0,212,255,.7); }
+}
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in { animation: fade-in .25s ease-out forwards; }
+
+/* ── Responsive helpers ──────────────────────────────────────────────────── */
+@media (max-width: 640px) {
+  .sm\:hidden-mobile { display: none !important; }
+}
