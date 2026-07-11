@@ -157,35 +157,9 @@ class JWTMiddleware(BaseHTTPMiddleware):
 app.add_middleware(JWTMiddleware)
 
 # ── React UI estático en /ui/ ──────────────────────────────────────────────────
-# Ruta específica para dashboard.html con headers no-cache (evita WebView2 cache)
+# Servido íntegramente por StaticFiles; el middleware inferior fuerza no-cache
+# en todo /ui/* (evita el cache agresivo de WebView2 tras cada build).
 _react_dist = resource_path("react_dist")
-
-_NO_CACHE_HEADERS = {
-    "Cache-Control": "no-cache, no-store, must-revalidate",
-    "Pragma": "no-cache",
-    "Expires": "0",
-}
-
-@app.get("/ui/dashboard.html", include_in_schema=False)
-async def _serve_dashboard_html():
-    p = _react_dist / "dashboard.html"
-    return _Response(content=p.read_bytes(), media_type="text/html", headers=_NO_CACHE_HEADERS)
-
-@app.get("/ui/index.html", include_in_schema=False)
-@app.get("/ui/", include_in_schema=False)
-async def _serve_index_html():
-    p = _react_dist / "index.html"
-    return _Response(content=p.read_bytes(), media_type="text/html", headers=_NO_CACHE_HEADERS)
-
-@app.get("/ui/assets/index-CRDO1T5r.js", include_in_schema=False)
-async def _serve_main_bundle():
-    p = _react_dist / "assets" / "index-CRDO1T5r.js"
-    return _Response(content=p.read_bytes(), media_type="application/javascript", headers=_NO_CACHE_HEADERS)
-
-@app.get("/ui/proyectos.html", include_in_schema=False)
-async def _serve_proyectos():
-    p = _react_dist / "proyectos.html"
-    return _Response(content=p.read_bytes(), media_type="text/html", headers=_NO_CACHE_HEADERS)
 
 @app.middleware("http")
 async def _no_cache_ui(request, call_next):
