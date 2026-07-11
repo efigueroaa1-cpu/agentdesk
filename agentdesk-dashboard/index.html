@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="es" class="">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="AgentDesk Professional - Dashboard de Inteligencia Operacional" />
+    <script>
+      (function () {
+        var t = localStorage.getItem("agentdesk-theme");
+        var p = window.matchMedia("(prefers-color-scheme: dark)").matches;
+        if (t === "dark" || (!t && p)) document.documentElement.classList.add("dark");
+        if (t === "corporate") document.documentElement.classList.add("corporate");
+      })();
+    </script>
+    <title>AgentDesk Dashboard</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
