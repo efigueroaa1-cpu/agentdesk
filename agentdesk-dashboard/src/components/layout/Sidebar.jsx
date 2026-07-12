@@ -3,11 +3,16 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   LayoutDashboard, BarChart2, Settings, LogOut,
   ChevronLeft, ChevronRight, X, Zap, Briefcase,
+  Activity, Users, Globe, Layers, Database, Bell, Cpu,
+  FileText, DollarSign, Calendar, Shield,
 } from "../../icons.js";
 import { useTheme }    from "../../hooks/useTheme";
 import { useBranding } from "../../hooks/useBranding.js";
 
-const ICON_MAP = { LayoutDashboard, BarChart2, Settings };
+const ICON_MAP = {
+  LayoutDashboard, Activity, Users, Globe, Layers, Zap, Database,
+  Bell, Cpu, FileText, Settings, BarChart2, DollarSign, Calendar, Shield,
+};
 
 const springNav = { type: "spring", stiffness: 420, damping: 30 };
 
@@ -62,7 +67,7 @@ function NavItem({ label, icon, isActive, collapsed, onClick }) {
   );
 }
 
-export default function Sidebar({ navItems = [], user = {}, isOpen, onClose, onLogout }) {
+export default function Sidebar({ navItems = [], user = {}, isOpen, onClose, onLogout, onNavChange }) {
   const [activeId,  setActiveId]  = useState(navItems[0]?.id ?? 1);
   const [collapsed, setCollapsed] = useState(false);
   const { toggle: toggleTheme, isCyberpunk } = useTheme();
@@ -225,7 +230,7 @@ export default function Sidebar({ navItems = [], user = {}, isOpen, onClose, onL
               {...item}
               isActive={activeId === item.id}
               collapsed={collapsed}
-              onClick={() => { setActiveId(item.id); onClose?.(); }}
+              onClick={() => { setActiveId(item.id); onNavChange?.(item.id); onClose?.(); }}
             />
           ))}
         </nav>
