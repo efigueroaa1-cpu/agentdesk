@@ -100,7 +100,7 @@ const btnStyle = (variant) => ({
 
 export default function ProyectosModule() {
   const [db, setDb] = useState(loadDB);
-  const [projId, setProjId] = useState(() => loadDB().currentProject);
+  const [projId, setProjId] = useState(db.currentProject);
   const [agents, setAgents] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [taskModal, setTaskModal] = useState(null); // {task|null, defaultStatus}
@@ -181,11 +181,12 @@ Por favor analiza esta tarea y provee:
 4. Próximos pasos sugeridos
 5. Estimación de tiempo (si aplica)`;
     try {
-      const r = await fetch(`${API_BASE}/ejecutar/${aiAgent}`, {
+      const r = await fetch(`${API_BASE}/agentes/${aiAgent}/ejecutar`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ tarea: prompt }),
       });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const d = await r.json();
       const text =
         d.resultado ||
@@ -193,7 +194,17 @@ Por favor analiza esta tarea y provee:
         d.output ||
         d.result ||
         JSON.stringify(d, null, 2);
-      upsertTask({ ...selected, aiAnalysis: text, aiAgentId: aiAgent });
+      // Actualización funcional: fusiona sobre el estado ACTUAL de la tarea
+      // (el usuario pudo moverla de columna mientras corría el análisis).
+      const taskId = selected.id;
+      setDb((prev) => {
+        const arr = (prev.tasks[projId] || []).map((t) =>
+          t.id === taskId ? { ...t, aiAnalysis: text, aiAgentId: aiAgent } : t,
+        );
+        const next = { ...prev, tasks: { ...prev.tasks, [projId]: arr } };
+        saveDB(next);
+        return next;
+      });
       notify("Análisis completado ✓");
     } catch {
       notify(
