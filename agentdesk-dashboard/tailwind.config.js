@@ -1,6 +1,9 @@
 /** @type {import('tailwindcss').Config} */
 export default {
   content: ["./index.html", "./src/**/*.{js,jsx}"],
+  // PatchB nativizado: el ancho del sidebar nunca debe purgarse en producción,
+  // incluso si el branding dinámico compone la clase en runtime.
+  safelist: ["w-72", "w-[72px]"],
   darkMode: "class",
   theme: {
     extend: {
