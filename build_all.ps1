@@ -1,4 +1,4 @@
-# build_all.ps1 - Build industrial completo para AgentDesk
+﻿# build_all.ps1 - Build industrial completo para AgentDesk
 # PowerShell 5.1+  |  Ejecutar desde la raiz del proyecto Python
 #
 # Uso:
@@ -22,6 +22,17 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+# ── Guard de integridad: prohibido construir con artefactos de parcheo ──────────
+$bakFiles = Get-ChildItem -Path $PSScriptRoot -Recurse -Include "*.bak*" -File -ErrorAction SilentlyContinue |
+    Where-Object { $_.FullName -notmatch "node_modules|target|\\dist\\|\\build\\" }
+if ($bakFiles) {
+    Write-Host "ERROR: Archivos .bak detectados (residuos de parcheo manual):" -ForegroundColor Red
+    $bakFiles | ForEach-Object { Write-Host "  $($_.FullName)" -ForegroundColor Red }
+    Write-Host "Todo comportamiento debe residir en el codigo fuente. Elimina los .bak y reintenta." -ForegroundColor Red
+    exit 1
+}
+
 $Root     = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Dashboard = Join-Path $Root "agentdesk-dashboard"
 $TauriDir  = Join-Path $Dashboard "src-tauri"
@@ -86,8 +97,8 @@ if (-not $SkipTauri) {
 if (-not $SkipReact) {
     Step "Compilando React con Vite..."
     Set-Location $Dashboard
-    npm ci --prefer-offline 2>$null
-    if ($LASTEXITCODE -ne 0) { npm install }
+    npm ci --prefer-offline --legacy-peer-deps 2>$null
+    if ($LASTEXITCODE -ne 0) { npm install --legacy-peer-deps }
     npm run build
     if ($LASTEXITCODE -ne 0) { Fail "npm run build fallo" }
 
@@ -172,7 +183,7 @@ if ($DeployLocal) {
         (Join-Path $AppData "_internal\logs"),
         (Join-Path $AppData "_internal\data"),
         (Join-Path $AppData "_internal\reportes"),
-        (Join-Path $AppData "_internal\db"),
+        (Join-Path $AppData "_internal\db")
     )
     foreach ($d in $AppDataDirs) {
         if (-not (Test-Path $d)) {
