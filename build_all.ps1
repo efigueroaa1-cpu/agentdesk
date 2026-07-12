@@ -97,9 +97,12 @@ if (-not $SkipTauri) {
 if (-not $SkipReact) {
     Step "Compilando React con Vite..."
     Set-Location $Dashboard
-    npm ci --prefer-offline --legacy-peer-deps 2>$null
-    if ($LASTEXITCODE -ne 0) { npm install --legacy-peer-deps }
-    npm run build
+    # npm via cmd /c: en PS 5.1 con ErrorActionPreference=Stop, cualquier linea de
+    # stderr de un exe nativo redirigida se vuelve error fatal (NativeCommandError).
+    cmd /c "npm ci --prefer-offline --legacy-peer-deps 2>nul"
+    if ($LASTEXITCODE -ne 0) { cmd /c "npm install --legacy-peer-deps" }
+    if ($LASTEXITCODE -ne 0) { Fail "npm install fallo" }
+    cmd /c "npm run build"
     if ($LASTEXITCODE -ne 0) { Fail "npm run build fallo" }
 
     # Copiar dist → react_dist/ en raiz del proyecto Python (usado por PyInstaller)
@@ -144,7 +147,7 @@ if (-not $SkipTauri) {
     Set-Location $Dashboard
 
     $env:TAURI_SKIP_SIDECAR_VALIDATION = "1"   # no hay sidecar, el exe se bundlea como recurso
-    npm run tauri build
+    cmd /c "npm run tauri build"
     if ($LASTEXITCODE -ne 0) { Fail "tauri build fallo. Revisa el log de arriba." }
 
     $nsisDir  = Join-Path $TauriDir "target\release\bundle\nsis"
