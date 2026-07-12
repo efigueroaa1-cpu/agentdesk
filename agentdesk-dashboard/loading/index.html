@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AgentDesk</title>
+<style>
+  /* Splash embebido: Tauri lo carga mientras Rust inicia AgentDesk.exe --api
+     y espera /health; después navega el WebView a http://127.0.0.1:8000/ui/. */
+  html,body{height:100%;margin:0}
+  body{
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1.2rem;
+    background:#060f1c;color:#a8c0da;font-family:system-ui,-apple-system,sans-serif;
+  }
+  .logo{
+    font-size:1.6rem;font-weight:800;letter-spacing:-.02em;color:#00d4ff;
+    text-shadow:0 0 18px rgba(0,212,255,.5);
+  }
+  .spinner{
+    width:34px;height:34px;border-radius:50%;
+    border:3px solid rgba(0,212,255,.15);border-top-color:#00d4ff;
+    animation:spin 0.9s linear infinite;
+  }
+  .msg{font-size:.85rem;color:#3d5a78}
+  @keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+  <div class="logo">AgentDesk</div>
+  <div class="spinner" role="status" aria-label="Cargando"></div>
+  <div class="msg">Iniciando servicios&hellip;</div>
+</body>
+</html>
