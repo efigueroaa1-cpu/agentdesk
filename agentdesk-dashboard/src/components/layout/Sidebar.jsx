@@ -85,8 +85,6 @@ export default function Sidebar({ navItems = [], user = {}, isOpen, onClose, onL
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
-  const W = collapsed ? 72 : 256;
-
   return (
     <>
       {/* Overlay móvil animado */}
@@ -113,7 +111,6 @@ export default function Sidebar({ navItems = [], user = {}, isOpen, onClose, onL
       {/* Sidebar glassmorphism */}
       <aside
         style={{
-          width: W,
           background: "rgba(4,12,30,.88)",
           backdropFilter: "blur(20px)",
           WebkitBackdropFilter: "blur(20px)",
@@ -124,9 +121,11 @@ export default function Sidebar({ navItems = [], user = {}, isOpen, onClose, onL
           color: "var(--t-text)",
           overflow: "hidden",
           flexShrink: 0,
-          transition: "width .3s cubic-bezier(.4,0,.2,1), transform .3s cubic-bezier(.4,0,.2,1)",
+          transition: "transform .3s cubic-bezier(.4,0,.2,1)",
         }}
         className={`fixed top-0 left-0 h-full z-30
+                    ${collapsed ? "w-[72px]" : "w-72"}
+                    transition-[width] duration-300 ease-in-out
                     ${isOpen ? "translate-x-0" : "-translate-x-full"}
                     lg:relative lg:translate-x-0 lg:z-auto`}
       >
