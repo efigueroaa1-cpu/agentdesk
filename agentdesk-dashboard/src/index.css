@@ -92,3 +92,9 @@ body {
 @media (max-width: 640px) {
   .sm\:hidden-mobile { display: none !important; }
 }
+
+/* PatchA nativizado: pills superiores ocultas — navegación exclusiva por Sidebar.
+   Los botones permanecen en el DOM (id="_t_<vista>") para navegación programática. */
+.tab-pills {
+  display: none;
+}

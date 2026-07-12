@@ -36,24 +36,33 @@ import { SkipLink, LiveRegion } from "./components/ui/A11y.jsx";
 import AgentFlowEditor       from "./components/agents/AgentFlowEditor.jsx";
 import { NotificationContainer } from "./components/ui/NotificationSystem";
 import { navigation, currentUser, summary } from "./data/data";
+import ProyectosModule       from "./components/proyectos/ProyectosModule";
+import FinancialModule       from "./components/hub/FinancialModule";
+import GanttModule           from "./components/hub/GanttModule";
 
 const TABS = [
   ["dashboard","Dashboard"],["metricas","Métricas"],["agentes","Agentes"],
   ["mapa","Mapa Regional"],["3d","Embeddings 3D"],["pipeline","Pipeline"],
-  ["data","Datos"],["monitor","Monitor Web"],["bi","BI Dashboard"],["reportes","Reportes"],["sistema","Sistema"],["security","Seguridad"],
+  ["data","Datos"],["monitor","Monitor Web"],["bi","BI Dashboard"],["reportes","Reportes"],
+  ["sistema","Sistema"],["proyectos","Proyectos"],["financiero","Financiero"],
+  ["gantt","Gantt P6"],["security","Seguridad"],
 ];
 
-function TabBar({ view, setView }) {
+// Contrato de navegación Sidebar → vista (IDs fijos, ver data.js)
+const NAV_TO_VIEW = {
+  1:"dashboard", 2:"metricas", 3:"agentes", 4:"mapa", 5:"3d", 6:"pipeline",
+  7:"data", 8:"monitor", 9:"bi", 11:"reportes", 12:"sistema", 13:"security",
+  14:"proyectos", 15:"financiero", 16:"gantt",
+};
+
+// Pills de navegación superiores: ocultas por CSS (.tab-pills) — la navegación
+// vive en el Sidebar. Se mantienen en el DOM con id="_t_<vista>" como target
+// de navegación programática (tests / integraciones).
+function TabBar({ setView }) {
   return (
-    <div style={{ display:"flex", gap:".4rem", marginBottom:"1.2rem", flexWrap:"wrap" }}>
-      {TABS.map(([k,l]) => (
-        <button key={k} onClick={() => setView(k)} style={{
-          padding:"5px 14px", borderRadius:20, fontSize:".75rem",
-          fontWeight:600, cursor:"pointer", fontFamily:"inherit",
-          border: view===k ? "1.5px solid var(--t-accent)" : "1px solid var(--t-border)",
-          background: view===k ? "rgba(0,212,255,.12)" : "transparent",
-          color: view===k ? "var(--t-accent)" : "var(--t-text-muted)",
-        }}>{l}</button>
+    <div className="tab-pills">
+      {TABS.map(([k, l]) => (
+        <button key={k} id={`_t_${k}`} onClick={() => setView(k)}>{l}</button>
       ))}
     </div>
   );
@@ -100,14 +109,13 @@ function Dashboard() {
       user={{ ...currentUser, name: usuario.username }}
       navItems={navigation}
       pageTitle={{ dashboard:"Dashboard", metricas:"Métricas", agentes:"Agentes",
-                   pipeline:"Pipeline", data:"Datos", security:"Seguridad" }[view]}
+                   mapa:"Mapa Regional", "3d":"Embeddings 3D", pipeline:"Pipeline",
+                   data:"Datos", monitor:"Monitor Web", bi:"BI Dashboard",
+                   reportes:"Reportes", sistema:"Sistema", proyectos:"Proyectos",
+                   financiero:"Financiero", gantt:"Gantt P6", security:"Seguridad" }[view]}
       query="" onQueryChange={() => {}}
       isDark={isDark} onToggleDark={toggleDark} onLogout={logout}
-      onNavChange={(id) => {
-        if (id===2) setView("data");
-        else if (id===3) setView("security");
-        else setView("dashboard");
-      }}
+      onNavChange={(id) => setView(NAV_TO_VIEW[id] || "dashboard")}
     >
       <SkipLink />
       <GlobalSearch onNavigate={navigateTo} />
@@ -197,6 +205,10 @@ function Dashboard() {
         </ErrorBoundary>
       )}
       {view === "reportes" && <ErrorBoundary><ReportsPanel /></ErrorBoundary>}
+
+      {view === "proyectos"  && <ErrorBoundary><ProyectosModule /></ErrorBoundary>}
+      {view === "financiero" && <ErrorBoundary><FinancialModule /></ErrorBoundary>}
+      {view === "gantt"      && <ErrorBoundary><GanttModule /></ErrorBoundary>}
 
       {view === "sistema" && (
         <ErrorBoundary>
