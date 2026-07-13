@@ -34,7 +34,7 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "resources/AgentDesk/**/*": "AgentDesk/"
+      "resources/AgentDesk": "AgentDesk"
     }
   }
 }
