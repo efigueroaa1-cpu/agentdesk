@@ -122,14 +122,11 @@ class JWTMiddleware(BaseHTTPMiddleware):
             or method in _METODOS_PROTEGIDOS
         )
 
-        # Rutas públicas: no requieren token
-        if not necesita_token and (
-            path in _RUTAS_PUBLICAS
-            or any(path.startswith(p) for p in _PREFIJOS_PUBLICOS)
-        ):
-            return await call_next(request)
-
-        # Verificar token (si existe, extraer info del usuario; si no, continuar igual)
+        # Nota: las rutas bajo prefijos públicos (_RUTAS_PUBLICAS / _PREFIJOS_PUBLICOS)
+        # no exigen token para pasar, pero si el cliente envía uno igual se decodifica
+        # más abajo — varios endpoints bajo esos prefijos (p.ej. /analytics/, /backup/)
+        # verifican el rol ellos mismos vía request.state.rol, y ese chequeo solo
+        # funciona si el token llegó a decodificarse.
         auth_header = request.headers.get("Authorization", "")
         token       = auth_header.replace("Bearer ", "").strip()
 
@@ -139,7 +136,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
                     status_code=401,
                     content={"detail": "Token requerido para esta operación."},
                 )
-            # Sin token pero ruta no protegida → continuar
+            # Sin token: continúa como anónimo (rol por defecto "viewer" en cada endpoint)
             return await call_next(request)
 
         try:
@@ -1479,8 +1476,11 @@ async def update_set_url(payload: UpdateURLRequest) -> dict:
 
 
 @app.get("/backup/descargar")
-async def backup_descargar() -> _Response:
-    """Genera y descarga un ZIP con toda la base de datos y configuración."""
+async def backup_descargar(req: "Request") -> _Response:
+    """Genera y descarga un ZIP con toda la base de datos y configuración. Solo admin."""
+    from core.auth import tiene_permiso
+    if not tiene_permiso(getattr(req.state, "rol", "viewer"), "admin"):
+        raise HTTPException(403, detail="Se requiere rol admin.")
     from core.backup import crear_backup
     from datetime import datetime as _dt2
     try:
@@ -1496,8 +1496,11 @@ async def backup_descargar() -> _Response:
 
 
 @app.post("/backup/restaurar")
-async def backup_restaurar(archivo: UploadFile = _File(...)) -> dict:
-    """Restaura un backup desde un ZIP previamente generado."""
+async def backup_restaurar(req: "Request", archivo: UploadFile = _File(...)) -> dict:
+    """Restaura un backup desde un ZIP previamente generado. Solo admin."""
+    from core.auth import tiene_permiso
+    if not tiene_permiso(getattr(req.state, "rol", "viewer"), "admin"):
+        raise HTTPException(403, detail="Se requiere rol admin.")
     from core.backup import restaurar_backup
     try:
         data = await archivo.read()
