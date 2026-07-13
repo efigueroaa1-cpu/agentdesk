@@ -846,6 +846,13 @@ class AgentBase:
                                 self.nombre,
                                 extra={"agente": self.nombre, "modelo": self.modelo, "status": "ok"})
                 reporter.guardar_reporte(self.nombre, resultado)
+                try:
+                    reporter.guardar_reporte_pdf(self.nombre, resultado)
+                except Exception:
+                    logger.exception(
+                        "No se pudo generar el PDF del reporte (se conserva el .md)",
+                        extra={"agente": self.nombre},
+                    )
                 return resultado
 
         return None
