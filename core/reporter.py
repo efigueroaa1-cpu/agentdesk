@@ -150,6 +150,28 @@ def guardar_correccion(agente: str, sugerencia: Sugerencia) -> Path:
 
 # ── Exportación PDF ────────────────────────────────────────────────────────────
 
+_ACENTOS = {
+    "á": "a", "é": "e", "í": "i", "ó": "o", "ú": "u", "ñ": "n", "ü": "u",
+    "Á": "A", "É": "E", "Í": "I", "Ó": "O", "Ú": "U", "Ñ": "N", "Ü": "U",
+    "—": "-", "–": "-", "’": "'", "‘": "'", "“": '"', "”": '"', "…": "...",
+}
+
+
+def _txt(s) -> str:
+    """
+    Sanitiza texto para las fuentes core (Helvetica/Courier) de fpdf2, que solo
+    soportan latin-1. El contenido de estos PDFs viene de resúmenes generados
+    por IA: casi siempre trae tildes y guiones largos, que sin este saneo
+    revientan con FPDFUnicodeEncodingException y abortan la generación.
+    """
+    if s is None:
+        return ""
+    s = str(s)
+    for k, v in _ACENTOS.items():
+        s = s.replace(k, v)
+    return s.encode("latin-1", errors="replace").decode("latin-1")
+
+
 def _crear_pdf_base():
     """Devuelve una instancia FPDF con estilos corporativos."""
     from fpdf import FPDF
@@ -181,14 +203,14 @@ def _crear_pdf_base():
             self.set_fill_color(*self.AZUL)
             self.set_text_color(*self.BLANCO)
             self.set_font("Helvetica", "B", 10)
-            self.cell(0, 8, f"  {titulo}", fill=True, ln=True)
+            self.cell(0, 8, _txt(f"  {titulo}"), fill=True, ln=True)
             self.set_text_color(0, 0, 0)
             self.ln(2)
 
         def par(self, texto: str, size: int = 9):
             self.set_font("Helvetica", "", size)
             self.set_text_color(*self.GRIS)
-            self.multi_cell(0, 5, texto)
+            self.multi_cell(0, 5, _txt(texto))
             self.set_text_color(0, 0, 0)
 
     pdf = _PDF()
@@ -210,10 +232,10 @@ def guardar_reporte_pdf(agente: str, data: dict) -> Path:
     # Metadatos
     pdf.set_font("Helvetica", "B", 14)
     pdf.set_y(22)
-    pdf.cell(0, 10, f"Reporte Ejecutivo — {agente}", align="C", ln=True)
+    pdf.cell(0, 10, _txt(f"Reporte Ejecutivo - {agente}"), align="C", ln=True)
     pdf.set_font("Helvetica", "", 9)
     pdf.set_text_color(100, 100, 100)
-    pdf.cell(0, 6, f"Generado: {ts}  |  Estado: Exitoso", align="C", ln=True)
+    pdf.cell(0, 6, _txt(f"Generado: {ts}  |  Estado: Exitoso"), align="C", ln=True)
     pdf.set_text_color(0, 0, 0)
     pdf.ln(4)
 
@@ -236,8 +258,8 @@ def guardar_reporte_pdf(agente: str, data: dict) -> Path:
         for k, v in kpis.items():
             pdf.set_fill_color(240, 245, 250) if fill else pdf.set_fill_color(255, 255, 255)
             pdf.set_font("Helvetica", "", 9)
-            pdf.cell(col_w[0], 6, str(k)[:50], border="B", fill=True)
-            pdf.cell(col_w[1], 6, str(v)[:50], border="B", fill=True, ln=True)
+            pdf.cell(col_w[0], 6, _txt(str(k)[:50]), border="B", fill=True)
+            pdf.cell(col_w[1], 6, _txt(str(v)[:50]), border="B", fill=True, ln=True)
             fill = not fill
 
     # Tabla de datos
@@ -251,7 +273,7 @@ def guardar_reporte_pdf(agente: str, data: dict) -> Path:
         pdf.set_text_color(255, 255, 255)
         pdf.set_font("Helvetica", "B", 8)
         for h in tabla[0]:
-            pdf.cell(col_w, 7, str(h)[:25], border=0, fill=True)
+            pdf.cell(col_w, 7, _txt(str(h)[:25]), border=0, fill=True)
         pdf.ln()
         # Filas
         pdf.set_text_color(0, 0, 0)
@@ -260,7 +282,7 @@ def guardar_reporte_pdf(agente: str, data: dict) -> Path:
             pdf.set_fill_color(240, 245, 250) if fill else pdf.set_fill_color(255, 255, 255)
             pdf.set_font("Helvetica", "", 8)
             for celda in fila:
-                pdf.cell(col_w, 6, str(celda)[:25], border="B", fill=True)
+                pdf.cell(col_w, 6, _txt(str(celda)[:25]), border="B", fill=True)
             pdf.ln()
             fill = not fill
 
@@ -282,10 +304,10 @@ def guardar_correccion_pdf(agente: str, sugerencia: Sugerencia) -> Path:
     # Cabecera del documento
     pdf.set_y(22)
     pdf.set_font("Helvetica", "B", 14)
-    pdf.cell(0, 10, f"Reporte de Correccion — {agente}", align="C", ln=True)
+    pdf.cell(0, 10, _txt(f"Reporte de Correccion - {agente}"), align="C", ln=True)
     pdf.set_font("Helvetica", "", 9)
     pdf.set_text_color(150, 30, 30)
-    pdf.cell(0, 6, f"Generado: {ts}  |  Filtro: {sugerencia.filtro}  |  Severidad: {sugerencia.severidad}", align="C", ln=True)
+    pdf.cell(0, 6, _txt(f"Generado: {ts}  |  Filtro: {sugerencia.filtro}  |  Severidad: {sugerencia.severidad}"), align="C", ln=True)
     pdf.set_text_color(0, 0, 0)
     pdf.ln(4)
 
@@ -302,7 +324,7 @@ def guardar_correccion_pdf(agente: str, sugerencia: Sugerencia) -> Path:
         pdf.seccion("Ejemplo de Correccion")
         pdf.set_font("Courier", "", 8)
         pdf.set_fill_color(240, 245, 250)
-        pdf.multi_cell(0, 5, sugerencia.ejemplo, fill=True)
+        pdf.multi_cell(0, 5, _txt(sugerencia.ejemplo), fill=True)
 
     # Extracto del log JSON
     if sugerencia.log_excerpt:
@@ -310,7 +332,7 @@ def guardar_correccion_pdf(agente: str, sugerencia: Sugerencia) -> Path:
         pdf.set_font("Courier", "", 7)
         pdf.set_fill_color(240, 245, 250)
         fragmento = json.dumps(sugerencia.log_excerpt, indent=2, ensure_ascii=False)
-        pdf.multi_cell(0, 4, fragmento[:800], fill=True)
+        pdf.multi_cell(0, 4, _txt(fragmento[:800]), fill=True)
 
     pdf.output(str(ruta))
     logger.info("Correccion PDF guardada",
