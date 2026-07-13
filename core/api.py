@@ -1944,20 +1944,33 @@ async def chat_stream(payload: ChatRequest) -> _StreamingResponse:
         texto_completo = ""
         yield f"data: {_json.dumps({'tipo': 'inicio', 'agente_nombre': agente.nombre, 'agente_area': agente.area, 'agente_id': agente_key})}\n\n"
 
+        # Timeout por PASO (no por conversación completa): chat_con_herramientas_stream
+        # puede encadenar hasta MAX_PASOS=6 llamadas al modelo (una por herramienta
+        # invocada) antes de la respuesta final en streaming. Un límite fijo de 90s
+        # para todo el intercambio cortaba conversaciones con varias herramientas
+        # que seguían avanzando con normalidad; ahora cada paso individual (una
+        # llamada al modelo o una herramienta) tiene su propio margen, y la
+        # conversación completa puede tardar lo que necesite mientras siga avanzando.
+        PASO_TIMEOUT_S = 45.0
         try:
-            async with _asyncio.timeout(90):
-                async for evento in agente.chat_con_herramientas_stream(
-                    payload.mensaje,
-                    sesion_id       = payload.sesion_id,
-                    agente_id_clave = agente_key,
-                    archivo_id      = payload.archivo_id,
-                ):
-                    if evento.get("tipo") == "chunk":
-                        texto_completo += evento["chunk"]
-                    yield f"data: {_json.dumps(evento, ensure_ascii=False)}\n\n"
+            aiter = agente.chat_con_herramientas_stream(
+                payload.mensaje,
+                sesion_id       = payload.sesion_id,
+                agente_id_clave = agente_key,
+                archivo_id      = payload.archivo_id,
+            ).__aiter__()
+
+            while True:
+                try:
+                    evento = await _asyncio.wait_for(aiter.__anext__(), timeout=PASO_TIMEOUT_S)
+                except StopAsyncIteration:
+                    break
+                if evento.get("tipo") == "chunk":
+                    texto_completo += evento["chunk"]
+                yield f"data: {_json.dumps(evento, ensure_ascii=False)}\n\n"
 
         except _asyncio.TimeoutError:
-            yield f"data: {_json.dumps({'tipo': 'error', 'error': 'Tiempo de espera agotado (90s). El modelo tardó demasiado, intenta de nuevo.'})}\n\n"
+            yield f"data: {_json.dumps({'tipo': 'error', 'error': f'Tiempo de espera agotado ({int(PASO_TIMEOUT_S)}s) esperando un paso del modelo. Intenta de nuevo.'})}\n\n"
         except Exception as exc:
             yield f"data: {_json.dumps({'tipo': 'error', 'error': str(exc)})}\n\n"
         finally:
