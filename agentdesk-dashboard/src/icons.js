@@ -116,6 +116,7 @@ export {
   CalendarDays,
   DollarSign,
   Target,
+  Thermometer,
 
   // ── Infraestructura ────────────────────────────────────────────────────────
   Cloud,
