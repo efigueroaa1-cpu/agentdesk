@@ -33,8 +33,8 @@ export default defineConfig({
           ) {
             return "vendor-charts";
           }
-          if (id.includes("three")) return "vendor-three";
-          if (id.includes("react")) return "vendor-react";
+          // react + resto del ecosistema en un único chunk base: separarlos
+          // producía un ciclo vendor↔vendor-react (zustand/lucide importan react)
           return "vendor";
         },
       },
