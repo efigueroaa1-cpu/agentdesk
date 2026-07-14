@@ -1,0 +1,42 @@
+# AgentDesk — dependencias Python (Fase 7, higiene de dependencias)
+# Instalar:        pip install -r requirements.txt
+# Nota: PyInstaller empaqueta esto en el build de escritorio (build_all.ps1).
+
+# ── Núcleo web / API ───────────────────────────────────────────────────────
+fastapi>=0.138
+uvicorn>=0.49
+starlette>=1.3
+pydantic>=2.13
+httpx>=0.28
+
+# ── Persistencia (ADR-0005: modo dual) ────────────────────────────────────
+SQLAlchemy>=2.0.51
+
+# ── Seguridad (JWT + RBAC + vault) ────────────────────────────────────────
+bcrypt>=5.0
+PyJWT>=2.13
+cryptography>=49.0
+
+# ── Proveedores LLM ───────────────────────────────────────────────────────
+google-genai>=2.9
+openai>=2.44
+anthropic>=0.112
+groq>=1.5
+
+# ── Reportes y datos ──────────────────────────────────────────────────────
+fpdf2>=2.8.7
+openpyxl>=3.1
+
+# ── CLI / utilidades ──────────────────────────────────────────────────────
+rich>=15.0
+python-dotenv>=1.2
+
+# ── Calidad y gate (desarrollo) ───────────────────────────────────────────
+bandit>=1.9.4
+
+# ── Opcionales de planta (ADR-0004/0005) — descomenta según despliegue ────
+# psycopg2-binary>=2.9     # PostgreSQL (AGENTDESK_DB_URL)
+# paho-mqtt>=2.0           # broker MQTT real (AGENTDESK_MQTT_BROKER)
+# pymodbus>=3.6            # PLC Modbus TCP (AGENTDESK_MODBUS_HOST)
+# asyncua>=1.1             # servidor OPC-UA (AGENTDESK_OPCUA_ENDPOINT)
+# psutil>=5.9              # limite de memoria del sandbox (recomendado)

@@ -4,7 +4,9 @@
 #   1. Hay etiquetas TODO / FIXME / PATCH en el código fuente (excluye este script).
 #   2. Alguna prueba de test_security.py falla.
 #   3. Existen residuos de parches manuales (*.bak, *.orig, *.rej, *.patch).
-#   4. scripts/gate.py detecta violaciones de arquitectura hexagonal (ADR-0002).
+#   4. scripts/gate.py detecta violaciones de arquitectura (ADR-0002/0004/0005):
+#      imports entre capas, eval()/shell=True, Bandit sobre core/ (incluye
+#      core/adapters/) y main.py, tests de contrato/industriales/sandbox.
 #
 # Uso:  .\gate.ps1          (desde la raíz del monorepo)
 # Compatible con Windows PowerShell 5.1.
