@@ -1477,10 +1477,22 @@ async def update_set_url(payload: UpdateURLRequest) -> dict:
 
 @app.get("/backup/descargar")
 async def backup_descargar(req: "Request") -> _Response:
-    """Genera y descarga un ZIP con toda la base de datos y configuración. Solo admin."""
+    """Genera y descarga un ZIP con toda la base de datos y configuración. Solo admin (JWT)."""
     from core.auth import tiene_permiso
-    if not tiene_permiso(getattr(req.state, "rol", "viewer"), "admin"):
+    rol     = getattr(req.state, "rol", "viewer")
+    usuario = getattr(req.state, "usuario", None) or "anonimo"
+    ip      = req.client.host if req.client else "desconocida"
+    if not tiene_permiso(rol, "admin"):
+        logger.warning(
+            "AUDITORIA_SEGURIDAD: descarga de backup DENEGADA — "
+            "user_id=%s rol=%s ip=%s endpoint='GET /backup/descargar'",
+            usuario, rol, ip,
+        )
         raise HTTPException(403, detail="Se requiere rol admin.")
+    logger.info(
+        "AUDITORIA_SEGURIDAD: descarga de backup AUTORIZADA — user_id=%s ip=%s",
+        usuario, ip,
+    )
     from core.backup import crear_backup
     from datetime import datetime as _dt2
     try:
@@ -1497,10 +1509,22 @@ async def backup_descargar(req: "Request") -> _Response:
 
 @app.post("/backup/restaurar")
 async def backup_restaurar(req: "Request", archivo: UploadFile = _File(...)) -> dict:
-    """Restaura un backup desde un ZIP previamente generado. Solo admin."""
+    """Restaura un backup desde un ZIP previamente generado. Solo admin (JWT)."""
     from core.auth import tiene_permiso
-    if not tiene_permiso(getattr(req.state, "rol", "viewer"), "admin"):
+    rol     = getattr(req.state, "rol", "viewer")
+    usuario = getattr(req.state, "usuario", None) or "anonimo"
+    ip      = req.client.host if req.client else "desconocida"
+    if not tiene_permiso(rol, "admin"):
+        logger.warning(
+            "AUDITORIA_SEGURIDAD: restauracion de backup DENEGADA — "
+            "user_id=%s rol=%s ip=%s endpoint='POST /backup/restaurar'",
+            usuario, rol, ip,
+        )
         raise HTTPException(403, detail="Se requiere rol admin.")
+    logger.info(
+        "AUDITORIA_SEGURIDAD: restauracion de backup AUTORIZADA — user_id=%s ip=%s",
+        usuario, ip,
+    )
     from core.backup import restaurar_backup
     try:
         data = await archivo.read()
