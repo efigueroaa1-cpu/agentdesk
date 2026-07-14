@@ -48,6 +48,19 @@ orquestador, los servicios y el frontend no pueden depender de un protocolo.
 4. **Modo simulado de primera clase:** `SimuladorPlanta` genera señales
    deterministas (seed fija) con excursiones que cruzan umbrales — el mismo
    principio del MockProvider: demo y tests sin planta, sin broker y sin red.
+5. **Catálogo OT sobre base común (Fase 6):** la maquinaria compartida
+   (estado de fuentes, difusión, reactor, ciclo) vive en
+   `core/adapters/base.py`; cada protocolo solo define su catálogo de
+   sensores y `_leer_valor()`. Adaptadores: `mqtt_adapter` (operativo),
+   `modbus_adapter` y `opcua_adapter` (esqueletos con el mismo contrato,
+   modo real activable por `AGENTDESK_MODBUS_HOST` / `AGENTDESK_OPCUA_ENDPOINT`).
+6. **Cola Resiliente (Queue Mode):** en redes de planta inestables el WS
+   puede caerse momentáneamente. Cada suscriptor tiene una cola pendiente
+   acotada (500 eventos): la entrega se reintenta con backoff y, si el
+   suscriptor no responde, el evento se conserva y se re-entrega EN ORDEN
+   al reconectar. La cola es por-suscriptor: un consumidor caído no frena
+   al resto. Al llenarse se descarta lo más viejo dejando log (backpressure
+   explícito, nunca memoria infinita).
 
 ## Consecuencias
 

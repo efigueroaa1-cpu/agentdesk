@@ -146,6 +146,22 @@ def check_imports(archivos: list[str]) -> list[str]:
     return errores
 
 
+def check_tests_adaptadores(archivos: list[str]) -> list[str]:
+    """
+    ADR-0004: cada adaptador industrial (core/adapters/<x>_adapter.py) debe
+    tener su archivo de test espejo en tests/industrial/test_<x>_adapter.py.
+    """
+    errores = []
+    for rel in archivos:
+        if not (rel.startswith("core/adapters/") and rel.endswith("_adapter.py")):
+            continue
+        nombre   = Path(rel).stem                      # p.ej. "mqtt_adapter"
+        esperado = f"tests/industrial/test_{nombre}.py"
+        if not (RAIZ / esperado).is_file():
+            errores.append(f"  [OT-TEST] {rel}: falta su test espejo {esperado}")
+    return errores
+
+
 def check_bandit() -> list[str]:
     """Análisis estático de vulnerabilidades (severidad media/alta)."""
     proc = subprocess.run(
@@ -166,8 +182,17 @@ def check_contrato_auth() -> list[str]:
 
 
 def check_telemetria_industrial() -> list[str]:
-    """Fase 5: la cadena sensor→puerto→WS→reactor debe seguir funcionando."""
-    return _correr_suite("tests.industrial.test_telemetry_bridge", "INDUSTRIAL")
+    """Fases 5/6: toda la suite industrial (puente, MQTT, Modbus, OPC-UA, cola)."""
+    proc = subprocess.run(
+        [sys.executable, "-m", "unittest", "discover", "-s", "tests/industrial",
+         "-t", ".", "-p", "test_*.py"],
+        cwd=RAIZ, capture_output=True, text=True,
+    )
+    if proc.returncode == 0:
+        return []
+    detalle = (proc.stderr or proc.stdout or "").strip().splitlines()[-25:]
+    return ["  [INDUSTRIAL] tests/industrial FALLO:"] + \
+           [f"    {linea}" for linea in detalle]
 
 
 def _correr_suite(modulo: str, etiqueta: str) -> list[str]:
@@ -190,6 +215,7 @@ def main() -> int:
     errores += check_tags(archivos)
     errores += check_tamano(archivos)
     errores += check_imports(archivos)
+    errores += check_tests_adaptadores(archivos)
     errores += check_bandit()
     errores += check_contrato_auth()
     errores += check_telemetria_industrial()
