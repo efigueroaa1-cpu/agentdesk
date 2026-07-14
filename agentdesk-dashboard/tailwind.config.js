@@ -32,6 +32,16 @@ export default {
       fontFamily: {
         mono: ["JetBrains Mono", "Fira Code", "monospace"],
       },
+      keyframes: {
+        // Barra de progreso indeterminada (ProgressBar.jsx)
+        slide: {
+          from: { marginLeft: "0" },
+          to:   { marginLeft: "70%" },
+        },
+      },
+      animation: {
+        slide: "slide 1.2s ease-in-out infinite alternate",
+      },
     },
   },
   plugins: [],
