@@ -94,8 +94,10 @@ def _fetch_sync(url: str) -> bool:
     Descarga la URL del Gist de forma sincrona y retorna el campo 'active'.
     Usar dentro de asyncio.to_thread() para no bloquear el event loop.
     """
+    if not url.lower().startswith(("http://", "https://")):
+        raise ValueError(f"Esquema de URL no permitido para el Gist: {url[:40]}")
     req = urllib.request.Request(url, headers={"Accept": "application/json"})
-    with urllib.request.urlopen(req, timeout=_TIMEOUT_S) as resp:
+    with urllib.request.urlopen(req, timeout=_TIMEOUT_S) as resp:  # nosec B310 - esquema validado arriba
         data = json.loads(resp.read())
     return bool(data.get("active", True))
 

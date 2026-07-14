@@ -9,6 +9,10 @@ Bloquea el avance (exit 1) si detecta:
      todo archivo nuevo debe nacer bajo el límite.
   3. Violaciones de imports entre capas hexagonales (domain/ports/services/
      repositories) — p.ej. un servicio importando de la capa api.
+  4. Vulnerabilidades detectadas por Bandit (severidad media/alta en core,
+     scripts y main.py).
+  5. Fallas en el test-contrato de seguridad (tests/contract/test_auth_contract):
+     ningún endpoint de escritura puede quedar sin JWT ni autorización explícita.
 
 Uso:  python scripts/gate.py     (lo invoca gate.ps1 como paso de arquitectura)
 """
@@ -48,8 +52,10 @@ LEGACY_OVERSIZE: dict[str, int] = {
     "agentdesk-dashboard/src/components/settings/SecurityPanel.jsx":     898,
     "core/api.py":                                                      2865,
     "core/orchestrator.py":                                             1215,
-    "core/tools.py":                                                    1120,
-    "core/web_monitor.py":                                               593,
+    # tools.py subio 1120->1153 (2026-07-14): evaluador AST que reemplaza eval()
+    "core/tools.py":                                                    1153,
+    # web_monitor.py subio 593->595 (2026-07-14): validacion de esquema http(s)
+    "core/web_monitor.py":                                               595,
     "dashboard.py":                                                     1257,
     "ui/dashboard.py":                                                  1257,
 }
@@ -133,6 +139,33 @@ def check_imports(archivos: list[str]) -> list[str]:
     return errores
 
 
+def check_bandit() -> list[str]:
+    """Análisis estático de vulnerabilidades (severidad media/alta)."""
+    proc = subprocess.run(
+        [sys.executable, "-m", "bandit", "-q", "-r", "core", "scripts", "main.py",
+         "-ll", "--format", "custom",
+         "--msg-template", "{severity} {test_id} {relpath}:{line} {msg}"],
+        cwd=RAIZ, capture_output=True, text=True,
+    )
+    if proc.returncode == 0:
+        return []
+    salida = (proc.stdout or proc.stderr or "bandit fallo sin salida").strip()
+    return [f"  [BANDIT]  {linea}" for linea in salida.splitlines() if linea.strip()]
+
+
+def check_contrato_auth() -> list[str]:
+    """Test-contrato: toda escritura protegida por JWT o autorizada explícita."""
+    proc = subprocess.run(
+        [sys.executable, "-m", "unittest", "tests.contract.test_auth_contract"],
+        cwd=RAIZ, capture_output=True, text=True,
+    )
+    if proc.returncode == 0:
+        return []
+    detalle = (proc.stderr or proc.stdout or "").strip().splitlines()[-25:]
+    return ["  [CONTRATO] tests/contract/test_auth_contract.py FALLO:"] + \
+           [f"    {linea}" for linea in detalle]
+
+
 def main() -> int:
     archivos = inventario()
     print(f"Guardian de Arquitectura — {len(archivos)} archivos inventariados")
@@ -141,6 +174,8 @@ def main() -> int:
     errores += check_tags(archivos)
     errores += check_tamano(archivos)
     errores += check_imports(archivos)
+    errores += check_bandit()
+    errores += check_contrato_auth()
 
     if errores:
         print(f"\nVIOLACIONES ({len(errores)}):")
@@ -149,7 +184,8 @@ def main() -> int:
         print("\n=== ARQUITECTURA RECHAZADA ===")
         return 1
 
-    print("OK: 0 etiquetas | 0 archivos nuevos >500 lineas | 0 violaciones de imports")
+    print("OK: 0 etiquetas | 0 archivos nuevos >500 lineas | 0 violaciones de imports "
+          "| bandit limpio (media/alta) | contrato de auth 100%")
     print("=== ARQUITECTURA APROBADA ===")
     return 0
 

@@ -72,12 +72,16 @@ def verificar_actualizacion(url: str | None = None) -> dict:
         resultado_base["error"] = "URL de actualización no configurada."
         return resultado_base
 
+    if not check_url.lower().startswith(("http://", "https://")):
+        resultado_base["error"] = "URL de actualización con esquema no permitido (solo http/https)."
+        return resultado_base
+
     try:
         req = urllib.request.Request(
             check_url,
             headers={"User-Agent": f"AgentDesk/{VERSION_ACTUAL}"},
         )
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(req, timeout=10) as resp:  # nosec B310 - esquema validado arriba
             data = json.loads(resp.read().decode("utf-8"))
 
         version_nueva = data.get("version", "")
