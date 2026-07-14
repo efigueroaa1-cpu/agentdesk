@@ -269,6 +269,49 @@ class AnalisisFinanciero(Base):
         }
 
 
+class AuditoriaIA(Base):
+    """
+    Traza forense de CADA interacción de agente (ADR-0007): prompt, contexto,
+    modelo, herramientas, veredicto de guardrails y respuesta, con timestamp.
+    Auditoría para sectores regulados — portable SQLite/PostgreSQL (ADR-0005).
+    """
+    __tablename__ = "auditoria_ia"
+    id                 = Column(Integer, primary_key=True, autoincrement=True)
+    ts                 = Column(DateTime, default=datetime.utcnow, index=True)
+    user_id            = Column(String(64),  index=True, default="anonimo")
+    agente_id          = Column(String(64),  index=True)
+    tipo               = Column(String(24))               # chat | tarea | chat_stream
+    proveedor          = Column(String(24))               # groq/gemini/... (si aplica)
+    modelo             = Column(String(96))
+    prompt             = Column(Text)                     # entrada (truncada)
+    contexto           = Column(Text)                     # sesion/archivo/tarea
+    respuesta          = Column(Text)                     # salida (truncada)
+    herramientas_json  = Column(Text, default="[]")       # tools invocadas
+    costo_estimado     = Column(Integer, default=0)       # tokens aprox (len/4)
+    veredicto_guardrail = Column(String(32), default="no_aplica")
+    duracion_s         = Column(Float)
+    exitoso            = Column(Boolean, default=True)
+
+    def to_dict(self) -> dict:
+        return {
+            "id":                  self.id,
+            "ts":                  self.ts.isoformat() if self.ts else None,
+            "user_id":             self.user_id,
+            "agente_id":           self.agente_id,
+            "tipo":                self.tipo,
+            "proveedor":           self.proveedor,
+            "modelo":              self.modelo,
+            "prompt":              self.prompt,
+            "contexto":            self.contexto,
+            "respuesta":           self.respuesta,
+            "herramientas":        json.loads(self.herramientas_json or "[]"),
+            "costo_estimado":      self.costo_estimado,
+            "veredicto_guardrail": self.veredicto_guardrail,
+            "duracion_s":          self.duracion_s,
+            "exitoso":             self.exitoso,
+        }
+
+
 # ── Inicialización ────────────────────────────────────────────────────────────
 
 _engine  = None

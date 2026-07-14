@@ -744,6 +744,38 @@ async def rate_limiter_stats() -> dict:
         return {"stats": [], "error": str(exc)}
 
 
+# ── Diagnóstico y Auditoría IA (ADR-0007) ─────────────────────────────────────
+
+@app.get("/diagnostico/llm")
+async def diagnostico_llm() -> dict:
+    """Estado OPEN/CLOSED de los Circuit Breakers y latencias por proveedor."""
+    from core.services.llm_service import llm_service
+    return {"circuitos": llm_service.estado_circuitos(),
+            "cadena": [p for p, _ in llm_service._cadena]}
+
+
+@app.get("/auditoria/interacciones")
+async def auditoria_interacciones(req: "Request", agente_id: str = "",
+                                  user_id: str = "", limit: int = 50) -> dict:
+    """Trazas forenses de interacciones IA. Requiere rol supervisor o admin."""
+    from core.auth import tiene_permiso
+    if not tiene_permiso(getattr(req.state, "rol", "viewer"), "supervisor"):
+        raise HTTPException(403, detail="Se requiere rol supervisor o admin.")
+    from core.services import audit_service
+    return {"interacciones": audit_service.consultar(
+        agente_id or None, user_id or None, limit)}
+
+
+@app.get("/auditoria/costos")
+async def auditoria_costos(req: "Request", dias: int = 30) -> dict:
+    """Tokens estimados por agente (ventana N días). Supervisor o admin."""
+    from core.auth import tiene_permiso
+    if not tiene_permiso(getattr(req.state, "rol", "viewer"), "supervisor"):
+        raise HTTPException(403, detail="Se requiere rol supervisor o admin.")
+    from core.services import audit_service
+    return audit_service.resumen_costos(dias)
+
+
 @app.get("/health")
 async def health() -> dict:
     agentes_info = {}
@@ -785,7 +817,7 @@ async def get_upload_texto(archivo_id: str) -> dict:
 
 
 @app.post("/agentes/{agente_id}/ejecutar")
-async def ejecutar_agente(agente_id: str, payload: EjecutarRequest) -> dict:
+async def ejecutar_agente(agente_id: str, payload: EjecutarRequest, req: "Request") -> dict:
     """
     Ejecuta realizar_tarea() en el agente especificado.
     Emite eventos de telemetría en tiempo real via WebSocket /ws/telemetria.
@@ -795,6 +827,7 @@ async def ejecutar_agente(agente_id: str, payload: EjecutarRequest) -> dict:
         return await _orch_service.ejecutar_tarea(
             agente_id, payload.tarea,
             datos_extra=payload.datos_extra, archivo_id=payload.archivo_id,
+            user_id=getattr(req.state, "usuario", None) or "anonimo",
         )
     except LookupError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -885,11 +918,12 @@ class ChatRequest(BaseModel):
 
 
 @app.post("/chat")
-async def chat(payload: ChatRequest) -> dict:
+async def chat(payload: ChatRequest, req: "Request") -> dict:
     """Envía un mensaje conversacional a un agente. El orquestador elige el agente si no se especifica."""
     return await _orch_service.chat(
         payload.mensaje, agente_id=payload.agente_id,
         archivo_id=payload.archivo_id, sesion_id=payload.sesion_id,
+        user_id=getattr(req.state, "usuario", None) or "anonimo",
     )
 
 
@@ -918,18 +952,20 @@ async def memoria_limpiar(agente_id: str, sesion_id: str) -> dict:
 from fastapi.responses import StreamingResponse as _StreamingResponse
 
 @app.post("/chat/stream")
-async def chat_stream(payload: ChatRequest) -> _StreamingResponse:
+async def chat_stream(payload: ChatRequest, req: "Request") -> _StreamingResponse:
     """
     Versión STREAMING del chat — devuelve Server-Sent Events (SSE).
     El motor genera eventos dict (orchestrator_service); aquí solo se
     serializan a SSE — puro adaptador de transporte.
     """
     import json as _json
+    _user = getattr(req.state, "usuario", None) or "anonimo"
 
     async def event_generator():
         async for evento in _orch_service.chat_stream(
             payload.mensaje, agente_id=payload.agente_id,
             archivo_id=payload.archivo_id, sesion_id=payload.sesion_id,
+            user_id=_user,
         ):
             yield f"data: {_json.dumps(evento, ensure_ascii=False)}\n\n"
         yield "data: [DONE]\n\n"

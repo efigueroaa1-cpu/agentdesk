@@ -39,6 +39,9 @@ const MonitorPanel = lazy(() => import("./components/monitor/MonitorPanel"));
 const SystemPanel = lazy(() => import("./components/system/SystemPanel"));
 const LogsPanel = lazy(() => import("./components/system/LogsPanel"));
 const ProvidersPanel = lazy(() => import("./components/system/ProvidersPanel"));
+const DiagnosticsPanel = lazy(
+  () => import("./components/system/DiagnosticsPanel"),
+);
 const ChatPanel = lazy(() => import("./components/chat/ChatPanel"));
 const BackupPanel = lazy(() => import("./components/system/BackupPanel.jsx"));
 const UpdatePanel = lazy(() => import("./components/system/UpdatePanel.jsx"));
@@ -62,6 +65,7 @@ const TABS = [
   ["data", "Datos"],
   ["monitor", "Monitor Web"],
   ["bi", "BI Dashboard"],
+  ["diagnostico", "Diagnóstico"],
   ["reportes", "Reportes"],
   ["sistema", "Sistema"],
   ["proyectos", "Proyectos"],
@@ -81,6 +85,7 @@ const NAV_TO_VIEW = {
   7: "data",
   8: "monitor",
   9: "bi",
+  10: "diagnostico",
   11: "reportes",
   12: "sistema",
   13: "security",
@@ -168,6 +173,7 @@ function Dashboard() {
           data: "Datos",
           monitor: "Monitor Web",
           bi: "BI Dashboard",
+          diagnostico: "Diagnóstico",
           reportes: "Reportes",
           sistema: "Sistema",
           proyectos: "Proyectos",
@@ -326,6 +332,11 @@ function Dashboard() {
             {biView === "dashboard" && <BIDashboard />}
             {biView === "tendencias" && <TendenciasPanel />}
             {biView === "curva-s" && <SCurveModule />}
+          </ErrorBoundary>
+        )}
+        {view === "diagnostico" && (
+          <ErrorBoundary>
+            <DiagnosticsPanel />
           </ErrorBoundary>
         )}
         {view === "reportes" && (
