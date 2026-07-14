@@ -35,10 +35,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response as _Response
 from pydantic import BaseModel
 
-from core.command_bridge import CommandBridge, Command, CREAR_AGENTE, RELOAD_CONFIG, RELOAD_FINANZAS
+from core.command_bridge import CommandBridge, Command, RELOAD_CONFIG, RELOAD_FINANZAS
 from core.config_loader  import load_config
 from core.path_manager   import REPORTES_DIR, resource_path
-from core.schemas        import AgentConfig
 from core              import kill_switch
 from fastapi.staticfiles import StaticFiles
 
@@ -136,6 +135,16 @@ _bridge:        CommandBridge | None = None
 _tarea_monitor: asyncio.Task | None  = None
 _tarea_cmds:    asyncio.Task | None  = None
 _orquestador:   object | None        = None   # Orquestador (tipado como object para evitar import circular)
+
+# Servicio de gestión de agentes (hexagonal): los lambdas leen los globals de
+# este módulo en tiempo de llamada, así el servicio ve el bridge/orquestador
+# vigentes sin importar la capa api (ADR-0002).
+from core.services.agent_service import AgentService
+_agent_service = AgentService(
+    get_orquestador=lambda: _orquestador,
+    get_bridge=lambda: _bridge,
+    broadcast=lambda msg: manager.broadcast(msg),
+)
 
 
 def registrar_bridge(bridge: CommandBridge) -> None:
@@ -372,30 +381,8 @@ async def shutdown() -> None:
 
 @app.post("/agentes/ejecutar-todos")
 async def ejecutar_todos() -> dict:
-    """Ejecuta realizar_tarea() en TODOS los agentes en paralelo (asyncio.gather)."""
-    if not kill_switch.is_active():
-        return {"error": "Kill switch activo."}
-    if _orquestador is None:
-        return {"error": "Orquestador no disponible."}
-
-    await manager.broadcast({"tipo": "todos_ejecutando",
-                              "agentes": list(_orquestador.agentes.keys())})
-
-    resultados = {}
-    tareas     = [
-        agente.realizar_tarea("reporte_ventas")
-        for agente in _orquestador.agentes.values()
-    ]
-    respuestas = await asyncio.gather(*tareas, return_exceptions=True)
-    for aid, resp in zip(_orquestador.agentes.keys(), respuestas):
-        if isinstance(resp, Exception):
-            resultados[aid] = {"ok": False, "error": str(resp)}
-        else:
-            ok = resp is not None
-            resultados[aid] = {"ok": ok, "resumen": (resp or {}).get("resumen", "")[:150] if ok else None}
-
-    await manager.broadcast({"tipo": "todos_completados", "resultados": resultados})
-    return {"ok": True, "resultados": resultados}
+    """Ejecuta realizar_tarea() en TODOS los agentes en paralelo (agent_service)."""
+    return await _agent_service.ejecutar_todos()
 
 
 @app.get("/logs")
@@ -1471,34 +1458,16 @@ async def ejecutar_agente(agente_id: str, payload: EjecutarRequest) -> dict:
 @app.get("/agentes")
 async def listar_agentes() -> dict:
     """Lista agentes aplanando ubicacion.lat/lng al nivel raíz para el mapa React."""
-    try:
-        config = load_config()
-        agentes = []
-        for a in config.get("agents", []):
-            ub = a.get("ubicacion") or {}
-            agentes.append({
-                **a,
-                "lat":   ub.get("lat",   a.get("lat",   0)),
-                "lng":   ub.get("lng",   a.get("lng",   0)),
-                "label": ub.get("label", a.get("label", "")),
-            })
-        return {"agentes": agentes}
-    except Exception as e:
-        return {"error": str(e), "agentes": []}
+    return _agent_service.listar()
 
 
 @app.delete("/agentes/{agente_id}")
 async def eliminar_agente(agente_id: str) -> dict:
     """Elimina un agente del sistema y de config.json."""
-    if not kill_switch.is_active():
-        return {"error": "Kill switch activo."}
-    if _orquestador is None:
-        return {"error": "Orquestador no disponible."}
-    ok = await _orquestador.eliminar_agente(agente_id)
-    if not ok:
-        raise HTTPException(status_code=404, detail=f"Agente '{agente_id}' no encontrado.")
-    await manager.broadcast({"tipo": "agente_eliminado", "agente_id": agente_id})
-    return {"ok": True, "agente_id": agente_id}
+    try:
+        return await _agent_service.eliminar(agente_id)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 
 # ── Modelo de entrada para actualizar agente ───────────────────────────────────
@@ -1515,16 +1484,11 @@ class ActualizarAgenteRequest(BaseModel):
 @app.put("/agentes/{agente_id}")
 async def actualizar_agente(agente_id: str, payload: ActualizarAgenteRequest) -> dict:
     """Actualiza parámetros de un agente existente con validación Pydantic."""
-    if not kill_switch.is_active():
-        return {"error": "Kill switch activo."}
-    if _orquestador is None:
-        return {"error": "Orquestador no disponible."}
     data = {k: v for k, v in payload.model_dump().items() if v is not None}
-    ok = await _orquestador.actualizar_agente(agente_id, data)
-    if not ok:
-        raise HTTPException(status_code=400, detail=f"Actualización fallida para '{agente_id}'.")
-    await manager.broadcast({"tipo": "agente_actualizado", "agente_id": agente_id})
-    return {"ok": True, "agente_id": agente_id}
+    try:
+        return await _agent_service.actualizar(agente_id, data)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.get("/proveedores")
@@ -1539,43 +1503,13 @@ async def listar_proveedores() -> dict:
 
 @app.put("/proveedores/apikey")
 async def guardar_api_key(payload: dict) -> dict:
-    """Guarda una API key de proveedor en el archivo .env."""
-    from core.path_manager import data_path
+    """Guarda una API key de proveedor en .env + vault (lógica en providers)."""
     proveedor = payload.get("proveedor", "").upper()
     api_key   = payload.get("api_key", "").strip()
     if not proveedor or not api_key:
         raise HTTPException(status_code=400, detail="proveedor y api_key son requeridos.")
-
-    env_key  = f"{proveedor}_API_KEY"
-    # Buscar .env en el directorio AppData\AgentDesk
-    import pathlib as _pathlib
-    _appdata  = _pathlib.Path(os.environ.get("APPDATA", str(_pathlib.Path.home())))
-    env_path  = _appdata / "AgentDesk" / ".env"
-    if not env_path.exists():
-        env_path.parent.mkdir(parents=True, exist_ok=True)
-        env_path.write_text("", encoding="utf-8")
-
-    lines = env_path.read_text(encoding="utf-8").splitlines()
-    found = False
-    new_lines = []
-    for line in lines:
-        if line.startswith(f"{env_key}="):
-            new_lines.append(f"{env_key}={api_key}")
-            found = True
-        else:
-            new_lines.append(line)
-    if not found:
-        new_lines.append(f"{env_key}={api_key}")
-
-    env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
-    os.environ[env_key] = api_key
-    # Guardar también en vault cifrado
-    try:
-        from core.key_vault import guardar_key_cifrada
-        guardar_key_cifrada(env_key, api_key)
-    except Exception: pass
-    logger.info("API key configurada para proveedor: %s", proveedor)
-    return {"ok": True, "proveedor": proveedor, "env_key": env_key}
+    from core.providers import guardar_api_key as _guardar
+    return _guardar(proveedor, api_key)
 
 
 @app.get("/modelos")
@@ -2106,30 +2040,7 @@ async def recargar_config(payload: ReloadRequest) -> dict:
 
     payload.agente_id: ID del agente a recargar, o null para todos.
     """
-    if not kill_switch.is_active():
-        return {
-            "error": "Kill switch activo — operación bloqueada.",
-            "kill_switch": kill_switch.estado_dict(),
-        }
-
-    if _bridge is None:
-        return {"error": "CommandBridge no disponible. El orquestador no está conectado."}
-
-    await _bridge.send(Command(
-        tipo=RELOAD_CONFIG,
-        payload={"agente_id": payload.agente_id},
-    ))
-
-    await manager.broadcast({
-        "tipo":      "reload_solicitado",
-        "agente_id": payload.agente_id or "todos",
-    })
-
-    return {
-        "ok":       True,
-        "agente_id": payload.agente_id or "todos",
-        "mensaje":  "RELOAD_CONFIG encolado. El Orquestador aplicará los cambios en breve.",
-    }
+    return await _agent_service.recargar(payload.agente_id)
 
 
 @app.post("/agentes", status_code=201)
@@ -2138,51 +2049,7 @@ async def crear_agente(payload: NuevoAgenteRequest) -> dict:
     Valida con AgentConfig (Pydantic) y encola CREAR_AGENTE en el CommandBridge.
     El Orquestador consume el comando y persiste en config.json.
     """
-    if not kill_switch.is_active():
-        return {
-            "error": "Kill switch activo — creación de agentes bloqueada.",
-            "kill_switch": kill_switch.estado_dict(),
-        }
-
-    if _bridge is None:
-        return {"error": "CommandBridge no disponible. El orquestador no está conectado."}
-
-    # Validar con el mismo schema que usa el Orquestador
-    try:
-        AgentConfig.model_validate({
-            "nombre":      payload.nombre,
-            "tipo_ia":     payload.tipo_ia,
-            "area":        payload.area,
-            "modelo":      payload.modelo,
-            "temperatura": payload.temperatura,
-            "idioma":      payload.idioma,
-            "prompt_base": payload.prompt_base,
-        })
-    except Exception as e:
-        return {"error": f"Validacion fallida: {e}"}
-
-    # Enviar al CommandBridge — el Orquestador lo procesará de forma asíncrona
-    await _bridge.send(Command(
-        tipo=CREAR_AGENTE,
-        payload={
-            "nombre":      payload.nombre,
-            "tipo_ia":     payload.tipo_ia,
-            "area":        payload.area,
-            "modelo":      payload.modelo,
-            "temperatura": payload.temperatura,
-            "idioma":      payload.idioma,
-            "prompt_base": payload.prompt_base,
-        }
-    ))
-
-    # Notificar a todos los clientes WebSocket del nuevo agente
-    await manager.broadcast({
-        "tipo":   "agente_creado",
-        "nombre": payload.nombre,
-        "area":   payload.area,
-    })
-
-    return {"ok": True, "nombre": payload.nombre, "area": payload.area}
+    return await _agent_service.crear(payload.model_dump())
 
 
 # ── Helpers PDF ───────────────────────────────────────────────────────────────

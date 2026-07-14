@@ -28,8 +28,10 @@ def _sync_get(url: str, params: dict | None = None) -> Any:
     """GET síncrono con urllib (sin dependencias externas)."""
     if params:
         url = url + "?" + urllib.parse.urlencode(params)
+    if not url.lower().startswith(("http://", "https://")):
+        raise ValueError(f"Esquema de URL no permitido en el monitor: {url[:60]}")
     req = urllib.request.Request(url, headers=HEADERS)
-    with urllib.request.urlopen(req, timeout=30) as resp:
+    with urllib.request.urlopen(req, timeout=30) as resp:  # nosec B310 - esquema validado arriba
         body = resp.read().decode("utf-8", errors="replace")
         ct   = resp.headers.get("Content-Type","")
         return json.loads(body) if "json" in ct else body
