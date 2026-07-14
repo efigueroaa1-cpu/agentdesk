@@ -16,6 +16,7 @@ Integración:
 from __future__ import annotations
 
 import asyncio
+from core.timeutil import utcnow
 import json
 import logging
 from datetime import datetime
@@ -66,7 +67,7 @@ class MotorFinanciero:
                 dolar=float(data.get("dolar", {}).get("valor", 0)),
                 euro=float(data.get("euro",  {}).get("valor", 0)),
                 ipc=float(data.get("ipc",   {}).get("valor", 0)),
-                timestamp=datetime.utcnow(),
+                timestamp=utcnow(),
             )
             logger.info(
                 "Indicadores Chile obtenidos: UF=%.2f Dólar=%.2f",
@@ -192,7 +193,7 @@ class MotorFinanciero:
             "presupuesto": presupuesto.model_dump(mode="json"),
             "flujo":       flujo,
             "proyeccion":  [p.model_dump() for p in proyeccion],
-            "ts":          datetime.utcnow().isoformat(),
+            "ts":          utcnow().isoformat(),
         }
 
         try:

@@ -20,6 +20,7 @@ Seguridad:
 from __future__ import annotations
 
 import json as _json
+from core.timeutil import utcnow
 import logging
 import os
 from datetime import datetime, timedelta, timezone
@@ -248,7 +249,7 @@ def login(username: str, password: str) -> dict | None:
         if not _check_password(password, u.password_hash):
             return None
         # Registrar último acceso
-        u.ultimo_acceso = datetime.utcnow()
+        u.ultimo_acceso = utcnow()
         s.commit()
         return crear_token(u.username, u.rol)
 
