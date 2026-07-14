@@ -7,3 +7,4 @@ core.api_auth, FastAPI o Starlette desde esta capa — scripts/gate.py
 bloquea cualquier violación.
 """
 from core.services.auth_service import AuthService, auth_service  # noqa: F401
+from core.services.agent_service import AgentService              # noqa: F401

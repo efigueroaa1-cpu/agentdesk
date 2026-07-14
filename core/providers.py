@@ -56,7 +56,86 @@ CATALOGO: dict[str, list[dict]] = {
         {"id": "groq:mixtral-8x7b-32768",             "nombre": "Mixtral 8x7B (Groq)",      "costo": "gratis", "velocidad": "rápido"},
         {"id": "groq:gemma2-9b-it",                   "nombre": "Gemma2 9B (Groq)",         "costo": "gratis", "velocidad": "rápido"},
     ],
+    "mock": [
+        {"id": "mock:agentdesk-demo",                 "nombre": "Mock Determinista (Demo)", "costo": "gratis", "velocidad": "instantáneo"},
+    ],
 }
+
+
+# ── MockProvider: Modo Demo / Dry-Run (soberanía de ejecución) ─────────────────
+# AgentDesk debe poder funcionar, probarse y demostrarse SIN claves de API ni
+# internet. Con AGENTDESK_MODE=mock|demo|dry-run TODA generación se resuelve
+# localmente con respuestas deterministas (mismo prompt → misma respuesta),
+# lo que permite tests gratis y reproducibles en el gate.
+
+def modo_mock_activo() -> bool:
+    """True si AgentDesk corre en Modo Demo/Dry-Run (sin claves ni red)."""
+    return os.environ.get("AGENTDESK_MODE", "").lower() in {"mock", "demo", "dry-run", "dryrun"}
+
+
+def respuesta_mock(modelo: str, prompt: str) -> str:
+    """
+    Respuesta determinista: se deriva por hash SHA-256 del prompt, así el mismo
+    prompt produce siempre exactamente el mismo texto (asserts estables).
+    """
+    import hashlib
+    digest = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+    semilla = int(digest[:8], 16)
+    tendencias = ["alza sostenida", "estable", "leve contracción", "recuperación gradual"]
+    resumen_prompt = " ".join(prompt.split())[:120]
+    return (
+        f"[MOCK:{modelo}] Análisis determinista (Modo Demo, sin red).\n"
+        f"Solicitud: {resumen_prompt}\n"
+        f"Diagnóstico: tendencia con {tendencias[semilla % len(tendencias)]}; "
+        f"indicador compuesto {semilla % 100}/100.\n"
+        f"Recomendación: mantener el plan vigente y revisar en el próximo ciclo.\n"
+        f"Trazabilidad: sha256={digest[:16]}"
+    )
+
+
+async def _mock(modelo: str, prompt: str, temperature: float) -> str:
+    return respuesta_mock(modelo, prompt)
+
+
+async def _mock_stream(modelo: str, prompt: str, temperature: float):
+    texto = respuesta_mock(modelo, prompt)
+    for i in range(0, len(texto), 16):
+        yield texto[i:i + 16]
+
+
+def guardar_api_key(proveedor: str, api_key: str) -> dict:
+    """
+    Persiste la API key de un proveedor en el .env de AppData\\AgentDesk,
+    la activa en el entorno del proceso y la respalda en el vault cifrado.
+    (Extraído de core/api.py — la API solo valida el transporte.)
+    """
+    import pathlib as _pathlib
+    env_key  = f"{proveedor.upper()}_API_KEY"
+    _appdata = _pathlib.Path(os.environ.get("APPDATA", str(_pathlib.Path.home())))
+    env_path = _appdata / "AgentDesk" / ".env"
+    if not env_path.exists():
+        env_path.parent.mkdir(parents=True, exist_ok=True)
+        env_path.write_text("", encoding="utf-8")
+
+    lines, found, new_lines = env_path.read_text(encoding="utf-8").splitlines(), False, []
+    for line in lines:
+        if line.startswith(f"{env_key}="):
+            new_lines.append(f"{env_key}={api_key}")
+            found = True
+        else:
+            new_lines.append(line)
+    if not found:
+        new_lines.append(f"{env_key}={api_key}")
+
+    env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+    os.environ[env_key] = api_key
+    try:
+        from core.key_vault import guardar_key_cifrada
+        guardar_key_cifrada(env_key, api_key)
+    except Exception:
+        pass
+    logger.info("API key configurada para proveedor: %s", proveedor.upper())
+    return {"ok": True, "proveedor": proveedor.upper(), "env_key": env_key}
 
 
 def parse_model_id(model_id: str) -> tuple[str, str]:
@@ -76,6 +155,7 @@ def proveedores_configurados() -> dict[str, bool]:
         "deepseek":  bool(os.environ.get("DEEPSEEK_API_KEY")),
         "anthropic": bool(os.environ.get("ANTHROPIC_API_KEY")),
         "groq":      bool(os.environ.get("GROQ_API_KEY")),
+        "mock":      modo_mock_activo(),
     }
 
 
@@ -103,7 +183,11 @@ async def generate_stream(model_id: str, prompt: str,
     """
     proveedor, modelo = parse_model_id(model_id)
 
-    if proveedor == "gemini":
+    # Modo Demo/Dry-Run: intercepta TODOS los proveedores (cero red, cero costo)
+    if proveedor == "mock" or modo_mock_activo():
+        async for chunk in _mock_stream(modelo, prompt, temperature):
+            yield chunk
+    elif proveedor == "gemini":
         async for chunk in _gemini_stream(modelo, prompt, temperature):
             yield chunk
     elif proveedor == "openai":
@@ -129,6 +213,10 @@ async def generate(model_id: str, prompt: str, temperature: float = 0.4,
     prioridad: 1=alta (chat), 2=media (análisis), 3=baja (batch automático)
     """
     proveedor, modelo = parse_model_id(model_id)
+
+    # Modo Demo/Dry-Run: respuesta local determinista sin rate limiter ni red
+    if proveedor == "mock" or modo_mock_activo():
+        return await _mock(modelo, prompt, temperature)
 
     _fn_map = {
         "gemini":    _gemini,
