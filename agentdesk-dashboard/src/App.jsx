@@ -1,4 +1,4 @@
-import { useState, Suspense, useEffect, useCallback } from "react";
+import { useState, Suspense, useEffect, useCallback, lazy } from "react";
 import { AuthProvider } from "./context/AuthContext";
 import { useAuth } from "./context/AuthContext";
 import ProtectedRoute from "./components/auth/ProtectedRoute";
@@ -6,39 +6,51 @@ import MainLayout from "./components/layout/MainLayout";
 import SummarySection from "./components/sections/SummarySection";
 import ErrorBoundary from "./components/ui/ErrorBoundary";
 import AgentStatusSection from "./components/sections/AgentStatusSection";
-import AgentPerformancePanel from "./components/agents/AgentPerformancePanel";
-import MetricsPanel from "./components/metrics/MetricsPanel";
-import AgentAreaView from "./components/agents/AgentAreaView";
-import AgentManager from "./components/agents/AgentManager";
-import PipelineControl from "./components/pipeline/PipelineControl";
-import ErrorPanel from "./components/pipeline/ErrorPanel";
-import DataProviderPanel from "./components/settings/DataProviderPanel";
-import SecurityPanel from "./components/settings/SecurityPanel";
-import RegionalMap from "./components/map/RegionalMap";
-import ReportsPanel from "./components/reports/ReportsPanel";
-import BIDashboard from "./components/bi/BIDashboard";
-import TendenciasPanel from "./components/bi/TendenciasPanel";
-import SCurveModule from "./components/hub/SCurveModule";
-import MonitorPanel from "./components/monitor/MonitorPanel";
-import SystemPanel from "./components/system/SystemPanel";
-import LogsPanel from "./components/system/LogsPanel";
-import ProvidersPanel from "./components/system/ProvidersPanel";
-import ChatPanel from "./components/chat/ChatPanel";
-import { lazy } from "react";
-const EmbeddingView3D = lazy(() => import("./components/hub/EmbeddingView3D"));
 import { useDarkMode } from "./hooks/useDarkMode";
 import { initAuth } from "./services/auth.service.js";
 import { useAppStore } from "./store/useAppStore.js";
 import GlobalSearch from "./components/search/GlobalSearch.jsx";
-import BackupPanel from "./components/system/BackupPanel.jsx";
-import UpdatePanel from "./components/system/UpdatePanel.jsx";
 import { SkipLink } from "./components/ui/A11y.jsx";
-import AgentFlowEditor from "./components/agents/AgentFlowEditor.jsx";
 import { NotificationContainer } from "./components/ui/NotificationSystem";
 import { navigation, currentUser, summary } from "./data/data";
-import ProyectosModule from "./components/proyectos/ProyectosModule";
-import FinancialModule from "./components/hub/FinancialModule";
-import GanttModule from "./components/hub/GanttModule";
+
+// ── Code-splitting (Fase 8, ADR-0006): los módulos pesados cargan bajo demanda
+// al entrar a su pestaña. El shell inicial solo trae layout + dashboard base.
+const AgentPerformancePanel = lazy(
+  () => import("./components/agents/AgentPerformancePanel"),
+);
+const MetricsPanel = lazy(() => import("./components/metrics/MetricsPanel"));
+const AgentAreaView = lazy(() => import("./components/agents/AgentAreaView"));
+const AgentManager = lazy(() => import("./components/agents/AgentManager"));
+const PipelineControl = lazy(
+  () => import("./components/pipeline/PipelineControl"),
+);
+const ErrorPanel = lazy(() => import("./components/pipeline/ErrorPanel"));
+const DataProviderPanel = lazy(
+  () => import("./components/settings/DataProviderPanel"),
+);
+const SecurityPanel = lazy(() => import("./components/settings/SecurityPanel"));
+const RegionalMap = lazy(() => import("./components/map/RegionalMap"));
+const ReportsPanel = lazy(() => import("./components/reports/ReportsPanel"));
+const BIDashboard = lazy(() => import("./components/bi/BIDashboard"));
+const TendenciasPanel = lazy(() => import("./components/bi/TendenciasPanel"));
+const SCurveModule = lazy(() => import("./components/hub/SCurveModule"));
+const MonitorPanel = lazy(() => import("./components/monitor/MonitorPanel"));
+const SystemPanel = lazy(() => import("./components/system/SystemPanel"));
+const LogsPanel = lazy(() => import("./components/system/LogsPanel"));
+const ProvidersPanel = lazy(() => import("./components/system/ProvidersPanel"));
+const ChatPanel = lazy(() => import("./components/chat/ChatPanel"));
+const BackupPanel = lazy(() => import("./components/system/BackupPanel.jsx"));
+const UpdatePanel = lazy(() => import("./components/system/UpdatePanel.jsx"));
+const AgentFlowEditor = lazy(
+  () => import("./components/agents/AgentFlowEditor.jsx"),
+);
+const ProyectosModule = lazy(
+  () => import("./components/proyectos/ProyectosModule"),
+);
+const FinancialModule = lazy(() => import("./components/hub/FinancialModule"));
+const GanttModule = lazy(() => import("./components/hub/GanttModule"));
+const EmbeddingView3D = lazy(() => import("./components/hub/EmbeddingView3D"));
 
 const TABS = [
   ["dashboard", "Dashboard"],
@@ -175,184 +187,196 @@ function Dashboard() {
       <GlobalSearch onNavigate={navigateTo} />
       <TabBar setView={setView} />
 
-      {view === "dashboard" && (
-        <ErrorBoundary>
-          <div
-            style={{ display: "flex", flexDirection: "column", gap: "1.2rem" }}
-          >
-            <SummarySection data={summary} />
-            <AgentStatusSection
-              onRunAgent={() => {
-                setView("pipeline");
-                setPipelineView("control");
-              }}
-            />
-            <AgentPerformancePanel />
+      <Suspense
+        fallback={
+          <div className="flex h-[300px] items-center justify-center text-[var(--t-text-muted)]">
+            Cargando módulo…
           </div>
-        </ErrorBoundary>
-      )}
-
-      {view === "metricas" && (
-        <ErrorBoundary>
-          <MetricsPanel />
-        </ErrorBoundary>
-      )}
-
-      {view === "agentes" && (
-        <ErrorBoundary>
-          <SubTabs
-            items={[
-              ["configurar", "Configurar por Área"],
-              ["tabla", "Tabla CRUD"],
-              ["flujo", "Editor de Flujo"],
-              ["chat", "Chat con Agentes"],
-            ]}
-            active={agentView}
-            setActive={setAgentView}
-          />
-          {agentView === "configurar" && <AgentAreaView />}
-          {agentView === "tabla" && <AgentManager />}
-          {agentView === "flujo" && <AgentFlowEditor />}
-          {agentView === "chat" && (
+        }
+      >
+        {view === "dashboard" && (
+          <ErrorBoundary>
             <div
               style={{
-                border: "1px solid var(--t-border)",
-                borderRadius: 12,
-                overflow: "hidden",
+                display: "flex",
+                flexDirection: "column",
+                gap: "1.2rem",
               }}
             >
-              <ChatPanel
-                initialFiles={chatFiles}
-                onFilesUsed={() => setChatFiles([])}
+              <SummarySection data={summary} />
+              <AgentStatusSection
+                onRunAgent={() => {
+                  setView("pipeline");
+                  setPipelineView("control");
+                }}
               />
+              <AgentPerformancePanel />
             </div>
-          )}
-        </ErrorBoundary>
-      )}
+          </ErrorBoundary>
+        )}
 
-      {view === "mapa" && (
-        <ErrorBoundary>
-          <RegionalMap />
-        </ErrorBoundary>
-      )}
+        {view === "metricas" && (
+          <ErrorBoundary>
+            <MetricsPanel />
+          </ErrorBoundary>
+        )}
 
-      {view === "3d" && (
-        <ErrorBoundary>
-          <Suspense
-            fallback={
+        {view === "agentes" && (
+          <ErrorBoundary>
+            <SubTabs
+              items={[
+                ["configurar", "Configurar por Área"],
+                ["tabla", "Tabla CRUD"],
+                ["flujo", "Editor de Flujo"],
+                ["chat", "Chat con Agentes"],
+              ]}
+              active={agentView}
+              setActive={setAgentView}
+            />
+            {agentView === "configurar" && <AgentAreaView />}
+            {agentView === "tabla" && <AgentManager />}
+            {agentView === "flujo" && <AgentFlowEditor />}
+            {agentView === "chat" && (
               <div
                 style={{
-                  height: 400,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  color: "var(--t-text-muted)",
+                  border: "1px solid var(--t-border)",
+                  borderRadius: 12,
+                  overflow: "hidden",
                 }}
               >
-                Cargando Three.js...
+                <ChatPanel
+                  initialFiles={chatFiles}
+                  onFilesUsed={() => setChatFiles([])}
+                />
               </div>
-            }
-          >
-            <EmbeddingView3D />
-          </Suspense>
-        </ErrorBoundary>
-      )}
+            )}
+          </ErrorBoundary>
+        )}
 
-      {view === "pipeline" && (
-        <ErrorBoundary>
-          <SubTabs
-            items={[
-              ["control", "Control Pipeline"],
-              ["errores", "Feed de Errores"],
-            ]}
-            active={pipelineView}
-            setActive={setPipelineView}
-          />
-          {pipelineView === "control" ? <PipelineControl /> : <ErrorPanel />}
-        </ErrorBoundary>
-      )}
+        {view === "mapa" && (
+          <ErrorBoundary>
+            <RegionalMap />
+          </ErrorBoundary>
+        )}
 
-      {view === "data" && (
-        <ErrorBoundary>
-          <DataProviderPanel
-            onSendToOrquestador={(archivos) => {
-              setChatFiles(archivos);
-              setView("agentes");
-              setAgentView("chat");
-            }}
-          />
-        </ErrorBoundary>
-      )}
-      {view === "monitor" && (
-        <ErrorBoundary>
-          <MonitorPanel />
-        </ErrorBoundary>
-      )}
+        {view === "3d" && (
+          <ErrorBoundary>
+            <Suspense
+              fallback={
+                <div
+                  style={{
+                    height: 400,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    color: "var(--t-text-muted)",
+                  }}
+                >
+                  Cargando Three.js...
+                </div>
+              }
+            >
+              <EmbeddingView3D />
+            </Suspense>
+          </ErrorBoundary>
+        )}
 
-      {view === "bi" && (
-        <ErrorBoundary>
-          <SubTabs
-            items={[
-              ["dashboard", "BI Dashboard"],
-              ["tendencias", "Tendencias Históricas"],
-              ["curva-s", "Curva S (EVM)"],
-            ]}
-            active={biView}
-            setActive={setBiView}
-          />
-          {biView === "dashboard" && <BIDashboard />}
-          {biView === "tendencias" && <TendenciasPanel />}
-          {biView === "curva-s" && <SCurveModule />}
-        </ErrorBoundary>
-      )}
-      {view === "reportes" && (
-        <ErrorBoundary>
-          <ReportsPanel />
-        </ErrorBoundary>
-      )}
+        {view === "pipeline" && (
+          <ErrorBoundary>
+            <SubTabs
+              items={[
+                ["control", "Control Pipeline"],
+                ["errores", "Feed de Errores"],
+              ]}
+              active={pipelineView}
+              setActive={setPipelineView}
+            />
+            {pipelineView === "control" ? <PipelineControl /> : <ErrorPanel />}
+          </ErrorBoundary>
+        )}
 
-      {view === "proyectos" && (
-        <ErrorBoundary>
-          <ProyectosModule />
-        </ErrorBoundary>
-      )}
-      {view === "financiero" && (
-        <ErrorBoundary>
-          <FinancialModule />
-        </ErrorBoundary>
-      )}
-      {view === "gantt" && (
-        <ErrorBoundary>
-          <GanttModule />
-        </ErrorBoundary>
-      )}
+        {view === "data" && (
+          <ErrorBoundary>
+            <DataProviderPanel
+              onSendToOrquestador={(archivos) => {
+                setChatFiles(archivos);
+                setView("agentes");
+                setAgentView("chat");
+              }}
+            />
+          </ErrorBoundary>
+        )}
+        {view === "monitor" && (
+          <ErrorBoundary>
+            <MonitorPanel />
+          </ErrorBoundary>
+        )}
 
-      {view === "sistema" && (
-        <ErrorBoundary>
-          <SubTabs
-            items={[
-              ["control", "Control del Sistema"],
-              ["proveedores", "Proveedores IA"],
-              ["logs", "Visor de Logs"],
-              ["backup", "Backup & Restore"],
-              ["update", "Actualizaciones"],
-            ]}
-            active={sistemaView}
-            setActive={setSistemaView}
-          />
-          {sistemaView === "control" && <SystemPanel />}
-          {sistemaView === "proveedores" && <ProvidersPanel />}
-          {sistemaView === "logs" && <LogsPanel />}
-          {sistemaView === "backup" && <BackupPanel />}
-          {sistemaView === "update" && <UpdatePanel />}
-        </ErrorBoundary>
-      )}
+        {view === "bi" && (
+          <ErrorBoundary>
+            <SubTabs
+              items={[
+                ["dashboard", "BI Dashboard"],
+                ["tendencias", "Tendencias Históricas"],
+                ["curva-s", "Curva S (EVM)"],
+              ]}
+              active={biView}
+              setActive={setBiView}
+            />
+            {biView === "dashboard" && <BIDashboard />}
+            {biView === "tendencias" && <TendenciasPanel />}
+            {biView === "curva-s" && <SCurveModule />}
+          </ErrorBoundary>
+        )}
+        {view === "reportes" && (
+          <ErrorBoundary>
+            <ReportsPanel />
+          </ErrorBoundary>
+        )}
 
-      {view === "security" && (
-        <ErrorBoundary>
-          <SecurityPanel />
-        </ErrorBoundary>
-      )}
+        {view === "proyectos" && (
+          <ErrorBoundary>
+            <ProyectosModule />
+          </ErrorBoundary>
+        )}
+        {view === "financiero" && (
+          <ErrorBoundary>
+            <FinancialModule />
+          </ErrorBoundary>
+        )}
+        {view === "gantt" && (
+          <ErrorBoundary>
+            <GanttModule />
+          </ErrorBoundary>
+        )}
+
+        {view === "sistema" && (
+          <ErrorBoundary>
+            <SubTabs
+              items={[
+                ["control", "Control del Sistema"],
+                ["proveedores", "Proveedores IA"],
+                ["logs", "Visor de Logs"],
+                ["backup", "Backup & Restore"],
+                ["update", "Actualizaciones"],
+              ]}
+              active={sistemaView}
+              setActive={setSistemaView}
+            />
+            {sistemaView === "control" && <SystemPanel />}
+            {sistemaView === "proveedores" && <ProvidersPanel />}
+            {sistemaView === "logs" && <LogsPanel />}
+            {sistemaView === "backup" && <BackupPanel />}
+            {sistemaView === "update" && <UpdatePanel />}
+          </ErrorBoundary>
+        )}
+
+        {view === "security" && (
+          <ErrorBoundary>
+            <SecurityPanel />
+          </ErrorBoundary>
+        )}
+      </Suspense>
     </MainLayout>
   );
 }
