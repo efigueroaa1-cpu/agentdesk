@@ -23,6 +23,7 @@ y recibe los mismos eventos JSON que el FilterLogHandler envía al terminal.
 from __future__ import annotations
 
 import asyncio
+from core.timeutil import utcnow
 import json
 import logging
 import os
@@ -608,7 +609,7 @@ async def dashboard_datos(agente_id: str = "", dias: int = 30) -> dict:
                 qm = qm.filter(Mensaje.agente_id == agente_id)
             total_mensajes = qm.count()
 
-            hace_n = _dt.utcnow() - _td(days=dias)
+            hace_n = utcnow() - _td(days=dias)
 
             # Daily activity
             qa = (
@@ -662,7 +663,7 @@ async def dashboard_datos(agente_id: str = "", dias: int = 30) -> dict:
     ]
 
     # ── Series temporales ─────────────────────────────────────────────────────
-    hoy = _dt.utcnow().date()
+    hoy = utcnow().date()
     act_dict = {str(row.dia): row.n for row in actividad_raw}
     actividad_serie = [
         {"fecha": (hoy - _td(days=i)).strftime("%d/%m"),
@@ -1046,7 +1047,7 @@ async def tendencias_agente(agente_id: str, dias: int = 30) -> dict:
     from datetime import datetime as _dt, timedelta
     from collections import defaultdict
 
-    desde = _dt.utcnow() - timedelta(days=dias)
+    desde = utcnow() - timedelta(days=dias)
 
     # ── Intento 1: datos de ejecuciones del pipeline ──────────────────────────
     with get_session() as s:
@@ -1497,7 +1498,7 @@ async def backup_descargar(req: "Request") -> _Response:
     from datetime import datetime as _dt2
     try:
         data = crear_backup()
-        ts   = _dt2.utcnow().strftime("%Y%m%d_%H%M")
+        ts   = utcnow().strftime("%Y%m%d_%H%M")
         return _Response(
             content    = data,
             media_type = "application/zip",
@@ -2679,7 +2680,7 @@ async def gantt_exportar_pdf(
 
     pdf_bytes = _generar_pdf_gantt(proyecto, indicadores, agente_id=agente_id)
 
-    nombre = f"avance_{proyecto_id}_{datetime.utcnow().strftime('%Y%m%d_%H%M')}.pdf"
+    nombre = f"avance_{proyecto_id}_{utcnow().strftime('%Y%m%d_%H%M')}.pdf"
     return _Response(
         content=pdf_bytes,
         media_type="application/pdf",
@@ -2733,7 +2734,7 @@ def _generar_pdf_gantt(proyecto: dict, indicadores=None, _agente_id: str | None 
             self.set_text_color(*GRIS_OSC)
             meses = ["enero","febrero","marzo","abril","mayo","junio",
                      "julio","agosto","septiembre","octubre","noviembre","diciembre"]
-            n = datetime.utcnow()
+            n = utcnow()
             fecha = f"{n.day} de {meses[n.month-1]} de {n.year}"
             self.cell(0, 6, _txt(f"AgentDesk - {fecha} - Pag. {self.page_no()}"), align="C")
 

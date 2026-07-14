@@ -15,6 +15,7 @@ Salidas:
 from __future__ import annotations
 
 import json
+from core.timeutil import utcnow
 import logging
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
@@ -39,7 +40,7 @@ class MotorCompliance:
         """Lee guardrail_eventos de la DB para los últimos `dias` días."""
         try:
             from core.database import GuardrailEvento, get_session
-            desde = datetime.utcnow() - timedelta(days=dias)
+            desde = utcnow() - timedelta(days=dias)
             with get_session() as s:
                 filas = (
                     s.query(GuardrailEvento)
@@ -71,7 +72,7 @@ class MotorCompliance:
             logger.info("compliance: log rotado antes del análisis de métricas")
 
         eventos: list[dict] = []
-        desde = datetime.utcnow() - timedelta(days=dias)
+        desde = utcnow() - timedelta(days=dias)
 
         try:
             lineas = Path(ruta).read_text(encoding="utf-8", errors="replace").splitlines()
@@ -92,7 +93,7 @@ class MotorCompliance:
                 try:
                     ts = datetime.fromisoformat(ts_str[:19])
                 except ValueError:
-                    ts = datetime.utcnow()
+                    ts = utcnow()
 
                 if ts < desde:
                     continue
@@ -218,7 +219,7 @@ class MotorCompliance:
             "sugerencias_temp":  sugerencias,
             "certificado":       certificado,
             "justificacion":     justificacion,
-            "generado_en":       datetime.utcnow().isoformat(),
+            "generado_en":       utcnow().isoformat(),
         }
 
     def registrar_evento(self, agente_id: str, guardrail: str, motivo: str = "") -> None:

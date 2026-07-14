@@ -17,6 +17,7 @@ Validación:   Pydantic v2 en toda entrada; rollback implícito si falla.
 from __future__ import annotations
 
 import json
+from core.timeutil import utcnow
 import logging
 from collections import defaultdict, deque
 from datetime import datetime, timedelta
@@ -283,7 +284,7 @@ class MotorGantt:
                 nuevo_pct = min(100.0, round((t.pct_completado or 0.0) + incremento_pct, 1))
                 t.pct_completado = nuevo_pct
                 if nuevo_pct >= 100.0:
-                    t.fin_real = datetime.utcnow()
+                    t.fin_real = utcnow()
                 actualizadas.append(t.to_dict())
             s.commit()
 

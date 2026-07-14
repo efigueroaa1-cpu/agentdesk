@@ -14,6 +14,7 @@ El ZIP NO incluye:
 """
 from __future__ import annotations
 import io
+from core.timeutil import utcnow
 import json
 import logging
 import zipfile
@@ -28,7 +29,7 @@ def crear_backup() -> bytes:
     from core.path_manager import data_path, resource_path
 
     buf     = io.BytesIO()
-    ts      = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    ts      = utcnow().strftime("%Y%m%d_%H%M%S")
     version = _version()
 
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:

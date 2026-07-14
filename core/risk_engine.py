@@ -15,6 +15,7 @@ Algoritmo:
 from __future__ import annotations
 
 import logging
+from core.timeutil import utcnow
 from datetime import datetime
 from typing import Literal
 
@@ -52,7 +53,7 @@ class MotorRiesgo:
         try:
             t0  = datetime.fromisoformat(inicio_plan[:19])
             t1  = datetime.fromisoformat(fin_plan[:19])
-            hoy = datetime.utcnow()
+            hoy = utcnow()
             if hoy <= t0:
                 return 0.0
             if hoy >= t1:
@@ -168,7 +169,7 @@ class MotorRiesgo:
 
         return {
             "proyecto_id":    proyecto_id,
-            "generado_en":    datetime.utcnow().isoformat(),
+            "generado_en":    utcnow().isoformat(),
             "tareas_analizadas": len(tareas),
             "alertas_activas":   len(alertas),
             "impacto_total":     round(impacto_total, 2),
@@ -188,7 +189,7 @@ class MotorRiesgo:
           - score:      puntaje 0-100 calculado como promedio ponderado
         """
         resultado: dict = {
-            "generado_en": datetime.utcnow().isoformat(),
+            "generado_en": utcnow().isoformat(),
             "gantt":       {},
             "finanzas":    {},
             "compliance":  {},

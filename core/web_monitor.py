@@ -8,6 +8,7 @@ Fuentes implementadas (todas gratuitas, sin registro):
 """
 from __future__ import annotations
 import asyncio
+from core.timeutil import utcnow
 import json
 import logging
 import urllib.request
@@ -189,7 +190,7 @@ async def fetch_futbol_equipo(nombre: str) -> dict:
             for p in proximos[:5]
         ],
         "fuente": "TheSportsDB (thesportsdb.com)",
-        "ts": datetime.utcnow().isoformat(),
+        "ts": utcnow().isoformat(),
     }
 
 
@@ -321,7 +322,7 @@ async def fetch_futbol_liga_completo(liga_id: str, liga_nombre: str = "") -> dic
             "promedio_goles_equipo": prom_gol,
         },
         "fuente": "TheSportsDB (thesportsdb.com)",
-        "ts":     datetime.utcnow().isoformat(),
+        "ts":     utcnow().isoformat(),
     }
 
 
@@ -343,7 +344,7 @@ async def fetch_energia_renovable(dias: int = 7) -> dict:
     Datos de energía solar y eólica para Chile central.
     Usa Open-Meteo (100% gratuito, sin API key).
     """
-    fecha_fin   = datetime.utcnow().date()
+    fecha_fin   = utcnow().date()
     fecha_ini   = fecha_fin - timedelta(days=dias)
 
     params = {
@@ -393,7 +394,7 @@ async def fetch_energia_renovable(dias: int = 7) -> dict:
                 "Generación solar moderada — evaluar complementar con eólico"
             ),
             "fuente": "Open-Meteo (open-meteo.com)",
-            "ts": datetime.utcnow().isoformat(),
+            "ts": utcnow().isoformat(),
         }
     except Exception as e:
         logger.error("fetch_energia_renovable: %s", e)
@@ -411,7 +412,7 @@ async def fetch_precios_spot_electricos() -> dict:
         url = "https://sipub.coordinador.cl/api/v1/recursos/costos_marginales_reales/"
         params = {
             "format":    "json",
-            "fecha__gte": (datetime.utcnow()-timedelta(days=7)).strftime("%Y-%m-%d"),
+            "fecha__gte": (utcnow()-timedelta(days=7)).strftime("%Y-%m-%d"),
             "limit":      50,
         }
         data = await _get(url, params=params)
@@ -423,7 +424,7 @@ async def fetch_precios_spot_electricos() -> dict:
                 "nota": "API Coordinador no disponible — usando datos de referencia",
                 "precio_referencia_usd_mwh": 85.0,
                 "fuente": "coordinador.cl (datos pueden requerir acceso directo)",
-                "ts": datetime.utcnow().isoformat(),
+                "ts": utcnow().isoformat(),
             }
 
         precios = [float(r.get("costo_marginal_real", 0)) for r in resultados if r.get("costo_marginal_real")]
@@ -435,11 +436,11 @@ async def fetch_precios_spot_electricos() -> dict:
             "tendencia":     "↑ al alza" if len(precios)>1 and precios[-1]>precios[0] else "↓ a la baja",
             "ultimo_registro": resultados[0] if resultados else None,
             "fuente": "Coordinador Eléctrico Nacional (sipub.coordinador.cl)",
-            "ts": datetime.utcnow().isoformat(),
+            "ts": utcnow().isoformat(),
         }
     except Exception as e:
         logger.error("fetch_precios_spot: %s", e)
-        return {"error": str(e), "ts": datetime.utcnow().isoformat()}
+        return {"error": str(e), "ts": utcnow().isoformat()}
 
 
 async def fetch_demanda_electrica() -> dict:
@@ -483,7 +484,7 @@ async def fetch_demanda_electrica() -> dict:
                 "Demanda eléctrica dentro de parámetros normales"
             ),
             "fuente": "Open-Meteo (forecast meteorológico)",
-            "ts": datetime.utcnow().isoformat(),
+            "ts": utcnow().isoformat(),
         }
     except Exception as e:
         logger.error("fetch_demanda_electrica: %s", e)

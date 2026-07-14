@@ -15,6 +15,7 @@ Tareas preconfiguradas:
 """
 from __future__ import annotations
 import asyncio
+from core.timeutil import utcnow
 import json
 import logging
 from datetime import datetime, timedelta
@@ -150,7 +151,7 @@ def init_scheduler(orquestador=None, broadcast=None) -> None:
     _orquestador_ref = orquestador
     _broadcast_fn    = broadcast
     # Calcular próximas ejecuciones
-    ahora = datetime.utcnow()
+    ahora = utcnow()
     for t in _tareas:
         t["proxima_ejecucion"] = ahora.isoformat()   # ejecutar al inicio
     logger.info("Scheduler inicializado con %d tareas", len(_tareas))
@@ -166,7 +167,7 @@ async def _ejecutar_tarea(tarea: dict) -> None:
     params = tarea.get("params", {})
 
     tarea["estado"] = "ejecutando"
-    tarea["ultimo_fetch"] = datetime.utcnow().isoformat()
+    tarea["ultimo_fetch"] = utcnow().isoformat()
     if _broadcast_fn:
         await _broadcast_fn({"tipo": "monitor_ejecutando", "tarea_id": tid, "nombre": nombre})
     logger.info("Scheduler: ejecutando '%s'", nombre)
@@ -310,7 +311,7 @@ async def _analizar_con_ia(tarea: dict, datos_crudos: dict) -> None:
             categoria=f"{tarea['categoria']}_analisis",
             clave=f"analisis_{tarea['id']}",
             valor=analisis[:2000],
-            metadata={"agente": agente.nombre, "ts": datetime.utcnow().isoformat()},
+            metadata={"agente": agente.nombre, "ts": utcnow().isoformat()},
         )
 
         if _broadcast_fn:
@@ -333,7 +334,7 @@ async def _loop_scheduler() -> None:
     logger.info("Scheduler: loop iniciado")
 
     while _running:
-        ahora = datetime.utcnow()
+        ahora = utcnow()
         for tarea in _tareas:
             if not tarea.get("activo"):
                 continue
@@ -387,7 +388,7 @@ def actualizar_tarea(tarea_id: str, activo: bool | None = None,
             if intervalo_min is not None:
                 t["intervalo_min"] = max(1, intervalo_min)
             if activo:   # al activar, programar ejecución inmediata
-                t["proxima_ejecucion"] = datetime.utcnow().isoformat()
+                t["proxima_ejecucion"] = utcnow().isoformat()
                 t["estado"] = "pendiente"
             _guardar_config()
             return get_tareas()

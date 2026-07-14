@@ -29,6 +29,7 @@ Requisito de ingeniería Sprint 8.
 from __future__ import annotations
 
 import logging
+from core.timeutil import utcnow
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -121,7 +122,7 @@ class MotorAnalitica:
                         flujo  = __import__("json").loads(f.flujo_json or "{}")
                         egreso = abs(flujo.get("egresos", 0))
                         acum  += egreso
-                        ts     = f.ts or datetime.utcnow()
+                        ts     = f.ts or utcnow()
                         puntos.append((ts, acum))
             puntos.sort(key=lambda x: x[0])
             return puntos
@@ -145,7 +146,7 @@ class MotorAnalitica:
 
         t0 = datetime.fromisoformat(min(fechas_inicio)[:19])
         t1 = datetime.fromisoformat(max(fechas_fin)[:19])
-        t1 = max(t1, datetime.utcnow())
+        t1 = max(t1, utcnow())
 
         semanas: list[datetime] = []
         cur = t0
@@ -218,7 +219,7 @@ class MotorAnalitica:
         pv_acum    = 0.0
         ev_acum    = 0.0
         ac_acum    = 0.0
-        hoy        = datetime.utcnow()
+        hoy        = utcnow()
 
         for semana in timeline:
             pv_sem = 0.0
@@ -273,7 +274,7 @@ class MotorAnalitica:
 
         resultado = {
             "proyecto_id": proyecto_id,
-            "generado_en": datetime.utcnow().isoformat(),
+            "generado_en": utcnow().isoformat(),
             "curva":       puntos,
             "kpis": {
                 "bac":  round(bac, 2),

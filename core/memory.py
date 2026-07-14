@@ -11,6 +11,7 @@ Tablas:
 """
 from __future__ import annotations
 from datetime import datetime
+from core.timeutil import utcnow
 from sqlalchemy import Column, String, Integer, Text, DateTime, ForeignKey
 from core.database import Base, get_session
 
@@ -74,7 +75,7 @@ def guardar_mensaje(
                 s.add(conv)
                 s.flush()
             else:
-                conv.ts_ultimo = datetime.utcnow()
+                conv.ts_ultimo = utcnow()
 
             # Guardar mensaje
             s.add(Mensaje(
