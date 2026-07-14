@@ -4,6 +4,7 @@
 #   1. Hay etiquetas TODO / FIXME / PATCH en el código fuente (excluye este script).
 #   2. Alguna prueba de test_security.py falla.
 #   3. Existen residuos de parches manuales (*.bak, *.orig, *.rej, *.patch).
+#   4. scripts/gate.py detecta violaciones de arquitectura hexagonal (ADR-0002).
 #
 # Uso:  .\gate.ps1          (desde la raíz del monorepo)
 # Compatible con Windows PowerShell 5.1.
@@ -31,7 +32,7 @@ Write-Host ("Archivos fuente analizados: {0}" -f $archivos.Count)
 # ── Check 1: etiquetas TODO / FIXME / PATCH ────────────────────────────────────
 # Solo etiquetas reales de marcador: al inicio de un comentario (#, //, /*, <!--)
 # o seguidas de ':'. Evita falsos positivos con la palabra española "todo".
-Write-Host "`n[1/3] Buscando etiquetas TODO / FIXME / PATCH..." -ForegroundColor Cyan
+Write-Host "`n[1/4] Buscando etiquetas TODO / FIXME / PATCH..." -ForegroundColor Cyan
 $patronTags = '(#|//|/\*|<!--)\s*(TODO|FIXME|PATCH)\b|\b(TODO|FIXME|PATCH):'
 $tags = @()
 foreach ($f in $archivos) {
@@ -49,7 +50,7 @@ if ($tags.Count -gt 0) {
 }
 
 # ── Check 2: suite de seguridad ────────────────────────────────────────────────
-Write-Host "`n[2/3] Ejecutando test_security.py..." -ForegroundColor Cyan
+Write-Host "`n[2/4] Ejecutando test_security.py..." -ForegroundColor Cyan
 python -m unittest test_security -v
 if ($LASTEXITCODE -ne 0) {
     Write-Host "  BLOQUEADO: la suite de seguridad falló." -ForegroundColor Red
@@ -59,7 +60,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 # ── Check 3: residuos de parches manuales ──────────────────────────────────────
-Write-Host "`n[3/3] Buscando residuos de parches (*.bak, *.orig, *.rej, *.patch)..." -ForegroundColor Cyan
+Write-Host "`n[3/4] Buscando residuos de parches (*.bak, *.orig, *.rej, *.patch)..." -ForegroundColor Cyan
 $residuos = @(git ls-files --cached --others --exclude-standard) |
     Where-Object { $_ -match '\.(bak|orig|rej|patch)$' }
 if ($residuos.Count -gt 0) {
@@ -68,6 +69,16 @@ if ($residuos.Count -gt 0) {
     $fallos += "Archivos residuales de parches manuales."
 } else {
     Write-Host "  OK: sin residuos." -ForegroundColor Green
+}
+
+# ── Check 4: Guardián de Arquitectura hexagonal (ADR-0002) ─────────────────────
+Write-Host "`n[4/4] Ejecutando scripts/gate.py (arquitectura hexagonal)..." -ForegroundColor Cyan
+python scripts\gate.py
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "  BLOQUEADO: violaciones de arquitectura." -ForegroundColor Red
+    $fallos += "scripts/gate.py detectó violaciones de arquitectura."
+} else {
+    Write-Host "  OK: arquitectura hexagonal respetada." -ForegroundColor Green
 }
 
 # ── Veredicto ──────────────────────────────────────────────────────────────────

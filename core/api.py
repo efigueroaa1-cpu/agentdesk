@@ -61,98 +61,12 @@ app.add_middleware(
     allow_credentials=True,
 )
 
-# ── Middleware JWT: verifica token en endpoints protegidos ─────────────────────
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request as _Request
+# ── Middleware JWT + endpoints /auth/* (adaptador en core/api_auth.py) ─────────
 from starlette.requests import Request      # alias para type hints en endpoints
-from starlette.responses import JSONResponse as _JSONResponse
-
-_RUTAS_PUBLICAS = {
-    "/auth/login", "/health", "/auth/verificar",
-    "/modelos", "/proveedores", "/docs", "/openapi.json",
-    "/version", "/kill-switch",
-}
-# Prefijos públicos: accesibles sin token
-_PREFIJOS_PUBLICOS = (
-    "/ui/", "/ws/",
-    "/monitor/", "/scheduler/",
-    "/embeddings", "/historial", "/tendencias",
-    "/reportes", "/uploads",
-    "/agentes",       # lectura pública (escritura la protege el método HTTP)
-    "/chat",          # el orquestador es la interfaz principal
-    "/upload",        # subir archivos para analizar
-    "/generar-pdf",   # generar reportes PDF
-    "/backup/",       # backup/restore
-    "/memoria/",      # memoria de conversaciones
-    "/rate-limiter",  # estadísticas
-    "/update/",       # verificar actualizaciones
-    "/dashboard",     # dashboard analytics
-    "/webhook/",      # webhooks externos (auth propia por bcrypt)
-    "/finanzas/",     # motor financiero (auth por JWT del middleware global)
-    "/gantt/",        # motor Gantt — CRUD de tareas y exportación PDF
-    "/compliance/",   # auditoría de guardrails
-    "/riesgo/",       # análisis de riesgo Gantt-Finanzas
-    "/sistema/",      # KPIs maestros para BIDashboard
-    "/analytics/",    # Curva S / EVM (rol supervisor+ verificado en endpoint)
-    "/docs/",         # manual PDF (accesible a todos los usuarios autenticados)
-    "/kill-switch/",  # toggle y URL del kill switch
-)
-
-# Solo proteger MUTACIONES sensibles con JWT
-_METODOS_PROTEGIDOS = {"DELETE"}  # solo DELETE requiere siempre token
-_RUTAS_SIEMPRE_PROTEGIDAS = {
-    "/auth/cambiar-password",
-    "/proveedores/apikey",
-}
-
-
-class JWTMiddleware(BaseHTTPMiddleware):
-    """Verifica el JWT en todas las rutas protegidas."""
-
-    async def dispatch(self, request: _Request, call_next):
-        path   = request.url.path
-        method = request.method
-
-        # OPTIONS siempre pasa (CORS preflight)
-        if method == "OPTIONS":
-            return await call_next(request)
-
-        # Rutas explícitamente protegidas (siempre necesitan token)
-        necesita_token = (
-            path in _RUTAS_SIEMPRE_PROTEGIDAS
-            or method in _METODOS_PROTEGIDOS
-        )
-
-        # Nota: las rutas bajo prefijos públicos (_RUTAS_PUBLICAS / _PREFIJOS_PUBLICOS)
-        # no exigen token para pasar, pero si el cliente envía uno igual se decodifica
-        # más abajo — varios endpoints bajo esos prefijos (p.ej. /analytics/, /backup/)
-        # verifican el rol ellos mismos vía request.state.rol, y ese chequeo solo
-        # funciona si el token llegó a decodificarse.
-        auth_header = request.headers.get("Authorization", "")
-        token       = auth_header.replace("Bearer ", "").strip()
-
-        if not token:
-            if necesita_token:
-                return _JSONResponse(
-                    status_code=401,
-                    content={"detail": "Token requerido para esta operación."},
-                )
-            # Sin token: continúa como anónimo (rol por defecto "viewer" en cada endpoint)
-            return await call_next(request)
-
-        try:
-            from core.auth import verificar_token
-            datos = verificar_token(token)
-            if datos:
-                request.state.usuario = datos.get("sub")
-                request.state.rol     = datos.get("role", "viewer")
-        except Exception:
-            pass
-
-        return await call_next(request)
-
+from core.api_auth import JWTMiddleware, router as _auth_router
 
 app.add_middleware(JWTMiddleware)
+app.include_router(_auth_router)
 
 # ── React UI estático en /ui/ ──────────────────────────────────────────────────
 # Servido íntegramente por StaticFiles; el middleware inferior fuerza no-cache
@@ -1258,137 +1172,7 @@ async def agentes_stats_all() -> dict:
     return {"stats": stats}
 
 
-# ── Auth JWT ──────────────────────────────────────────────────────────────────
-
-class LoginRequest(BaseModel):
-    username: str
-    password: str
-
-class CambiarPasswordRequest(BaseModel):
-    username:        str
-    nueva_password:  str
-    token:           str   # debe ser admin para cambiar cualquier usuario
-
-
-@app.post("/auth/login")
-async def auth_login(payload: LoginRequest) -> dict:
-    """Autentica y devuelve un JWT. El frontend lo guarda y envía en cada request."""
-    from core.auth import login as _login, SistemaNoConfiguradoError
-    try:
-        result = _login(payload.username, payload.password)
-    except SistemaNoConfiguradoError as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
-    if result is None:
-        raise HTTPException(status_code=401, detail="Credenciales incorrectas.")
-    return result
-
-
-@app.post("/auth/cambiar-password")
-async def auth_cambiar_password(payload: CambiarPasswordRequest) -> dict:
-    """Cambia la contraseña de un usuario (requiere token de admin)."""
-    from core.auth import verificar_token, cambiar_password
-    datos = verificar_token(payload.token)
-    if not datos or datos.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Se requiere rol admin.")
-    ok = cambiar_password(payload.username, payload.nueva_password)
-    if not ok:
-        raise HTTPException(status_code=404, detail=f"Usuario '{payload.username}' no encontrado.")
-    return {"ok": True, "mensaje": f"Contraseña de '{payload.username}' actualizada."}
-
-
-@app.get("/auth/verificar")
-async def auth_verificar(authorization: str = "") -> dict:
-    """Verifica si un token es válido."""
-    from core.auth import verificar_token
-    token = authorization.replace("Bearer ", "").strip()
-    datos = verificar_token(token)
-    if not datos:
-        raise HTTPException(status_code=401, detail="Token inválido o expirado.")
-    return {"ok": True, "username": datos.get("sub"), "role": datos.get("role")}
-
-
-# ── RBAC: Gestión de Usuarios (admin) ────────────────────────────────────────
-
-class CrearUsuarioRequest(BaseModel):
-    username:  str
-    password:  str
-    rol:       str = "viewer"
-
-class CambiarRolRequest(BaseModel):
-    nuevo_rol: str
-
-class ActivarRequest(BaseModel):
-    activo: bool
-
-
-@app.get("/auth/usuarios")
-async def auth_listar_usuarios(
-    req: "Request",
-    _rbac = None,
-) -> list[dict]:
-    """Lista todos los usuarios del sistema. Solo admin."""
-    from fastapi import Request, Depends
-    from core.auth import listar_usuarios, requiere_rol as _req_rol
-    # Verificación manual de rol (Depends no puede usarse en definición dinámica fácilmente)
-    rol = getattr(req.state, "rol", "viewer")
-    from core.auth import tiene_permiso
-    if not tiene_permiso(rol, "admin"):
-        raise HTTPException(403, detail="Se requiere rol admin.")
-    return listar_usuarios()
-
-
-@app.post("/auth/usuarios")
-async def auth_crear_usuario(req: "Request", payload: CrearUsuarioRequest) -> dict:
-    """Crea un nuevo usuario. Solo admin."""
-    from core.auth import tiene_permiso, crear_usuario
-    rol = getattr(req.state, "rol", "viewer")
-    if not tiene_permiso(rol, "admin"):
-        raise HTTPException(403, detail="Se requiere rol admin.")
-    try:
-        return crear_usuario(payload.username, payload.password, payload.rol)
-    except ValueError as e:
-        raise HTTPException(422, detail=str(e))
-
-
-@app.delete("/auth/usuarios/{username}")
-async def auth_eliminar_usuario(username: str, req: "Request") -> dict:
-    """Elimina un usuario. Solo admin. No puede eliminar su propio usuario."""
-    from core.auth import tiene_permiso, eliminar_usuario
-    rol = getattr(req.state, "rol", "viewer")
-    if not tiene_permiso(rol, "admin"):
-        raise HTTPException(403, detail="Se requiere rol admin.")
-    solicitante = getattr(req.state, "usuario", "")
-    try:
-        ok = eliminar_usuario(username, solicitante)
-    except ValueError as e:
-        raise HTTPException(422, detail=str(e))
-    if not ok:
-        raise HTTPException(404, detail=f"Usuario '{username}' no encontrado.")
-    return {"ok": True, "eliminado": username}
-
-
-@app.put("/auth/usuarios/{username}/rol")
-async def auth_cambiar_rol(username: str, payload: CambiarRolRequest, req: "Request") -> dict:
-    """Cambia el rol de un usuario. Solo admin."""
-    from core.auth import tiene_permiso, cambiar_rol
-    if not tiene_permiso(getattr(req.state, "rol", "viewer"), "admin"):
-        raise HTTPException(403, detail="Se requiere rol admin.")
-    try:
-        return cambiar_rol(username, payload.nuevo_rol)
-    except ValueError as e:
-        raise HTTPException(422, detail=str(e))
-
-
-@app.put("/auth/usuarios/{username}/activo")
-async def auth_activar_usuario(username: str, payload: ActivarRequest, req: "Request") -> dict:
-    """Activa o desactiva un usuario. Solo admin."""
-    from core.auth import tiene_permiso, activar_desactivar
-    if not tiene_permiso(getattr(req.state, "rol", "viewer"), "admin"):
-        raise HTTPException(403, detail="Se requiere rol admin.")
-    try:
-        return activar_desactivar(username, payload.activo)
-    except ValueError as e:
-        raise HTTPException(422, detail=str(e))
+# ── Auth JWT + RBAC: endpoints /auth/* movidos a core/api_auth.py ─────────────
 
 
 # ── Analytics: Curva S / Earned Value Management ──────────────────────────────
@@ -1479,21 +1263,8 @@ async def update_set_url(payload: UpdateURLRequest) -> dict:
 @app.get("/backup/descargar")
 async def backup_descargar(req: "Request") -> _Response:
     """Genera y descarga un ZIP con toda la base de datos y configuración. Solo admin (JWT)."""
-    from core.auth import tiene_permiso
-    rol     = getattr(req.state, "rol", "viewer")
-    usuario = getattr(req.state, "usuario", None) or "anonimo"
-    ip      = req.client.host if req.client else "desconocida"
-    if not tiene_permiso(rol, "admin"):
-        logger.warning(
-            "AUDITORIA_SEGURIDAD: descarga de backup DENEGADA — "
-            "user_id=%s rol=%s ip=%s endpoint='GET /backup/descargar'",
-            usuario, rol, ip,
-        )
-        raise HTTPException(403, detail="Se requiere rol admin.")
-    logger.info(
-        "AUDITORIA_SEGURIDAD: descarga de backup AUTORIZADA — user_id=%s ip=%s",
-        usuario, ip,
-    )
+    from core.api_auth import exigir_admin_auditado
+    exigir_admin_auditado(req, "descarga de backup", "GET /backup/descargar", logger)
     from core.backup import crear_backup
     from datetime import datetime as _dt2
     try:
@@ -1511,21 +1282,8 @@ async def backup_descargar(req: "Request") -> _Response:
 @app.post("/backup/restaurar")
 async def backup_restaurar(req: "Request", archivo: UploadFile = _File(...)) -> dict:
     """Restaura un backup desde un ZIP previamente generado. Solo admin (JWT)."""
-    from core.auth import tiene_permiso
-    rol     = getattr(req.state, "rol", "viewer")
-    usuario = getattr(req.state, "usuario", None) or "anonimo"
-    ip      = req.client.host if req.client else "desconocida"
-    if not tiene_permiso(rol, "admin"):
-        logger.warning(
-            "AUDITORIA_SEGURIDAD: restauracion de backup DENEGADA — "
-            "user_id=%s rol=%s ip=%s endpoint='POST /backup/restaurar'",
-            usuario, rol, ip,
-        )
-        raise HTTPException(403, detail="Se requiere rol admin.")
-    logger.info(
-        "AUDITORIA_SEGURIDAD: restauracion de backup AUTORIZADA — user_id=%s ip=%s",
-        usuario, ip,
-    )
+    from core.api_auth import exigir_admin_auditado
+    exigir_admin_auditado(req, "restauracion de backup", "POST /backup/restaurar", logger)
     from core.backup import restaurar_backup
     try:
         data = await archivo.read()
