@@ -61,8 +61,9 @@ LEGACY_OVERSIZE: dict[str, int] = {
     "ui/dashboard.py":                                                  1257,
 }
 
-# Reglas de capas (ADR-0002): prefijo de carpeta -> patrones de import prohibidos.
+# Reglas de capas (ADR-0002/0004): prefijo de carpeta -> imports prohibidos.
 CAPA_API = re.compile(r"^\s*(from|import)\s+core\.(api|api_auth)\b")
+CAPA_ADAPTERS = re.compile(r"^\s*(from|import)\s+core\.adapters\b")
 FRAMEWORKS = re.compile(r"^\s*(from|import)\s+(fastapi|starlette)\b")
 FRAMEWORKS_Y_ORM = re.compile(r"^\s*(from|import)\s+(fastapi|starlette|sqlalchemy|pydantic)\b")
 CORE_NO_DOMAIN = re.compile(r"^\s*(from|import)\s+core\.(?!domain\b)\w+")
@@ -79,6 +80,11 @@ REGLAS_IMPORTS: list[tuple[str, re.Pattern, str]] = [
     ("core/services/",     FRAMEWORKS,           "services no depende de FastAPI/Starlette"),
     ("core/repositories/", CAPA_API,             "repositories no puede importar la capa api"),
     ("core/repositories/", FRAMEWORKS,           "repositories no depende de FastAPI/Starlette"),
+    ("core/domain/",       CAPA_ADAPTERS,        "domain no puede importar adaptadores (ADR-0004)"),
+    ("core/ports/",        CAPA_ADAPTERS,        "ports no puede importar adaptadores (ADR-0004)"),
+    ("core/services/",     CAPA_ADAPTERS,        "services no puede importar adaptadores (ADR-0004)"),
+    ("core/repositories/", CAPA_ADAPTERS,        "repositories no puede importar adaptadores (ADR-0004)"),
+    ("core/adapters/",     CAPA_API,             "adapters no importa la capa api: la composicion vive en main.py (ADR-0004)"),
 ]
 
 
@@ -156,14 +162,23 @@ def check_bandit() -> list[str]:
 
 def check_contrato_auth() -> list[str]:
     """Test-contrato: toda escritura protegida por JWT o autorizada explícita."""
+    return _correr_suite("tests.contract.test_auth_contract", "CONTRATO")
+
+
+def check_telemetria_industrial() -> list[str]:
+    """Fase 5: la cadena sensor→puerto→WS→reactor debe seguir funcionando."""
+    return _correr_suite("tests.industrial.test_telemetry_bridge", "INDUSTRIAL")
+
+
+def _correr_suite(modulo: str, etiqueta: str) -> list[str]:
     proc = subprocess.run(
-        [sys.executable, "-m", "unittest", "tests.contract.test_auth_contract"],
+        [sys.executable, "-m", "unittest", modulo],
         cwd=RAIZ, capture_output=True, text=True,
     )
     if proc.returncode == 0:
         return []
     detalle = (proc.stderr or proc.stdout or "").strip().splitlines()[-25:]
-    return ["  [CONTRATO] tests/contract/test_auth_contract.py FALLO:"] + \
+    return [f"  [{etiqueta}] {modulo} FALLO:"] + \
            [f"    {linea}" for linea in detalle]
 
 
@@ -177,6 +192,7 @@ def main() -> int:
     errores += check_imports(archivos)
     errores += check_bandit()
     errores += check_contrato_auth()
+    errores += check_telemetria_industrial()
 
     if errores:
         print(f"\nVIOLACIONES ({len(errores)}):")
@@ -186,7 +202,7 @@ def main() -> int:
         return 1
 
     print("OK: 0 etiquetas | 0 archivos nuevos >500 lineas | 0 violaciones de imports "
-          "| bandit limpio (media/alta) | contrato de auth 100%")
+          "| bandit limpio (media/alta) | contrato de auth 100% | telemetria industrial 100%")
     print("=== ARQUITECTURA APROBADA ===")
     return 0
 

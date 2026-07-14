@@ -296,6 +296,16 @@ if __name__ == "__main__":
         import uvicorn
         from core.api import app as _api_app
 
+        # ── Telemetría industrial (ADR-0004) ──────────────────────────────────
+        # AGENTDESK_INDUSTRIAL=sim|mqtt activa el adaptador de planta. La
+        # composición ocurre AQUÍ (composition root): api.py no se toca; el
+        # broadcast del WS y el disparo reactivo de tareas llegan inyectados.
+        import os as _os
+        if _os.environ.get("AGENTDESK_INDUSTRIAL", "").lower() in ("sim", "mqtt", "1"):
+            from core.api import manager as _ws_manager
+            from core.adapters.mqtt_adapter import instalar_en_app as _instalar_ot
+            _instalar_ot(_api_app, broadcast=_ws_manager.broadcast)
+
         uvicorn.run(
             _api_app,
             host="127.0.0.1",
