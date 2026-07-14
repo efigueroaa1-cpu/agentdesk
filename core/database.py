@@ -1,5 +1,10 @@
 """
-core/database.py — Base de datos SQLite con SQLAlchemy.
+core/database.py — Capa de persistencia con SQLAlchemy (modo dual, ADR-0005).
+
+Motores:
+  SQLite (defecto)  — desarrollo y escritorio mono-usuario (WAL habilitado).
+  PostgreSQL        — planta con alta telemetría/concurrencia, activado con
+                      AGENTDESK_DB_URL=postgresql+psycopg2://user:pass@host/db
 
 Tablas:
   ejecuciones      — historial de tareas ejecutadas por agente
@@ -9,6 +14,9 @@ Tablas:
 """
 from __future__ import annotations
 import json
+import logging
+import os
+import re as _re
 from datetime import datetime
 from pathlib import Path
 from sqlalchemy import (
@@ -267,28 +275,57 @@ _engine  = None
 _Session = None
 
 
+def _url_sin_credenciales(url: str) -> str:
+    """Oculta user:pass de la URL para poder loggearla con seguridad."""
+    return _re.sub(r"//[^@/]+@", "//***@", url)
+
+
 def init_db(db_path: str | Path | None = None) -> None:
-    """Inicializa la base de datos. Se llama una vez al arrancar."""
+    """
+    Inicializa la base de datos (modo dual, ADR-0005).
+
+    - Con AGENTDESK_DB_URL definida (y sin db_path explícito) usa ese motor:
+      PostgreSQL para planta (pool con pre-ping ante redes inestables), o
+      cualquier URL de SQLAlchemy — incluida sqlite:/// para pruebas.
+    - Sin la variable: SQLite local en el data dir (comportamiento histórico).
+    """
     global _engine, _Session
-    from core.path_manager import data_path
+    _logger = logging.getLogger(__name__)
 
-    if db_path is None:
-        db_path = data_path("") / "agentdesk.db"
+    db_url = os.environ.get("AGENTDESK_DB_URL", "").strip() if db_path is None else ""
 
-    db_path = Path(db_path)
-    db_path.parent.mkdir(parents=True, exist_ok=True)
+    if db_url and not db_url.startswith("sqlite"):
+        # ── Motor industrial (PostgreSQL u otro servidor) ─────────────────
+        _engine = create_engine(
+            db_url,
+            pool_pre_ping=True,    # detecta conexiones muertas (red de planta)
+            pool_size=10,          # 10+ estaciones concurrentes
+            max_overflow=20,
+        )
+        _logger.info("DB industrial conectada: %s", _url_sin_credenciales(db_url))
+    else:
+        # ── SQLite (defecto escritorio, o URL sqlite:/// de AGENTDESK_DB_URL) ─
+        if db_url.startswith("sqlite"):
+            ruta = db_url.split("///", 1)[-1]
+            db_path = Path(ruta) if ruta and ruta != ":memory:" else None
+        if db_path is None:
+            from core.path_manager import data_path
+            db_path = data_path("") / "agentdesk.db"
 
-    _engine = create_engine(
-        f"sqlite:///{db_path}",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
+        db_path = Path(db_path)
+        db_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Habilitar WAL mode para mejor concurrencia
-    @event.listens_for(_engine, "connect")
-    def set_sqlite_pragma(conn, _):
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA foreign_keys=ON")
+        _engine = create_engine(
+            f"sqlite:///{db_path}",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+
+        # Habilitar WAL mode para mejor concurrencia
+        @event.listens_for(_engine, "connect")
+        def set_sqlite_pragma(conn, _):
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA foreign_keys=ON")
 
     Base.metadata.create_all(_engine)
     _Session = sessionmaker(bind=_engine, expire_on_commit=False)
