@@ -146,6 +146,7 @@ from core.services import analytics_service as _analytics
 from core.services import insights_service as _insights
 from core.services import upload_service as _uploads
 from core.services import report_service as _reports
+from core.services.queue_service import queue_service as _queue
 
 _agent_service = AgentService(
     get_orquestador=lambda: _orquestador,
@@ -706,7 +707,7 @@ async def backup_descargar(req: "Request") -> _Response:
     from core.backup import crear_backup
     from datetime import datetime as _dt2
     try:
-        data = crear_backup()
+        data = await _queue.ejecutar_pesado(crear_backup)
         ts   = utcnow().strftime("%Y%m%d_%H%M")
         return _Response(
             content    = data,
@@ -967,7 +968,8 @@ async def generar_pdf(payload: GenerarPDFRequest) -> dict:
         from core.report_generator import generar_pdf as _gen_pdf
         from core.path_manager import data_path
         from datetime import datetime as _dt
-        pdf_bytes = _gen_pdf(
+        pdf_bytes = await _queue.ejecutar_pesado(
+            _gen_pdf,
             reporte        = payload.reporte,
             titulo         = payload.titulo,
             subtitulo      = payload.subtitulo,
@@ -1048,7 +1050,7 @@ async def get_embeddings() -> dict:
     Embeddings semánticos reales usando TF-IDF + PCA.
     Los agentes similares (mismo dominio, mismos temas) quedan CERCANOS en 3D.
     """
-    return _analytics.embeddings_3d(_orquestador)
+    return await _queue.ejecutar_pesado(_analytics.embeddings_3d, _orquestador)
 
 
 @app.get("/kill-switch")
@@ -1339,7 +1341,8 @@ async def gantt_exportar_pdf(
         pass
 
     from core.services.gantt_report_service import generar_pdf_gantt
-    pdf_bytes = generar_pdf_gantt(proyecto, indicadores, agente_id=agente_id)
+    # Trabajo pesado fuera del event loop (QueuePort) — el Dashboard no se cuelga
+    pdf_bytes = await _queue.ejecutar_pesado(generar_pdf_gantt, proyecto, indicadores, agente_id)
 
     nombre = f"avance_{proyecto_id}_{utcnow().strftime('%Y%m%d_%H%M')}.pdf"
     return _Response(

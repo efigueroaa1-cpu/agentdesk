@@ -50,8 +50,8 @@ LEGACY_OVERSIZE: dict[str, int] = {
     "agentdesk-dashboard/src/components/pipeline/PipelineControl.jsx":  1050,
     "agentdesk-dashboard/src/components/proyectos/ProyectosModule.jsx": 1127,
     "agentdesk-dashboard/src/components/settings/SecurityPanel.jsx":     898,
-    # api.py bajo 2865->1493 (2026-07-14, ADR-0003): trinquete apretado
-    "core/api.py":                                                      1493,
+    # api.py 2865->1493 (ADR-0003); +3 (2026-07-14, Fase 8): cableo del QueuePort
+    "core/api.py":                                                      1496,
     # orchestrator subio 1215->1223 (2026-07-14): hook del sandbox Zero-Trust
     "core/orchestrator.py":                                             1223,
     # tools.py subio 1120->1153 (2026-07-14): evaluador AST que reemplaza eval()
@@ -168,6 +168,24 @@ def check_ejecucion_peligrosa(archivos: list[str]) -> list[str]:
     return errores
 
 
+# Lógica pesada síncrona (Fase 8): estas funciones bloquean el event loop si
+# se llaman directo desde un endpoint. En core/api.py DEBEN pasar por el
+# QueuePort (queue_service.ejecutar_pesado / encolar).
+RE_PESADO = re.compile(r"\b(generar_pdf_gantt|embeddings_3d|crear_backup|_gen_pdf)\s*\(")
+
+
+def check_pesado_sincrono() -> list[str]:
+    errores = []
+    for n, linea in enumerate(leer("core/api.py"), 1):
+        limpia = linea.strip()
+        if limpia.startswith(("def ", "async def ", "from ", "import ", "#")):
+            continue
+        if RE_PESADO.search(linea) and "ejecutar_pesado" not in linea and "encolar" not in linea:
+            errores.append(f"  [PESADO]  core/api.py:{n}: {limpia[:80]}  "
+                           f"<- logica pesada sincrona: usar queue_service (QueuePort)")
+    return errores
+
+
 def check_tests_adaptadores(archivos: list[str]) -> list[str]:
     """
     ADR-0004: cada adaptador industrial (core/adapters/<x>_adapter.py) debe
@@ -208,6 +226,12 @@ def check_sandbox() -> list[str]:
     return _correr_suite("tests.sandbox.test_subprocess_runner", "SANDBOX")
 
 
+def check_resiliencia() -> list[str]:
+    """Fase 8: fallback LLM con circuit breaker y cola de trabajos pesados."""
+    return (_correr_suite("tests.resilience.test_llm_fallback", "RESILIENCIA")
+            + _correr_suite("tests.resilience.test_queue_service", "RESILIENCIA"))
+
+
 def check_telemetria_industrial() -> list[str]:
     """Fases 5/6: toda la suite industrial (puente, MQTT, Modbus, OPC-UA, cola)."""
     proc = subprocess.run(
@@ -243,11 +267,13 @@ def main() -> int:
     errores += check_tamano(archivos)
     errores += check_imports(archivos)
     errores += check_ejecucion_peligrosa(archivos)
+    errores += check_pesado_sincrono()
     errores += check_tests_adaptadores(archivos)
     errores += check_bandit()
     errores += check_contrato_auth()
     errores += check_telemetria_industrial()
     errores += check_sandbox()
+    errores += check_resiliencia()
 
     if errores:
         print(f"\nVIOLACIONES ({len(errores)}):")
