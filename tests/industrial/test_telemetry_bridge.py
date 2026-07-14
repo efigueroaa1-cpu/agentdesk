@@ -127,6 +127,49 @@ class TestAdaptadorIndustrial(unittest.TestCase):
         self.assertGreater(len(tareas_disparadas), 0,
                            "El umbral crítico debe disparar la tarea reactiva")
 
+    def test_05b_cola_resiliente_sin_perdida_ante_ws_caido(self):
+        """
+        Queue Mode: si el WS falla momentáneamente, las métricas se encolan
+        y se re-entregan EN ORDEN al reconectar — cero pérdida de datos.
+        """
+        entregados: list[MetricEvent] = []
+        estado = {"caido": False}
+
+        async def escenario():
+            adaptador = MqttTelemetryAdapter(broker="", intervalo_s=0)
+
+            async def ws_intermitente(e: MetricEvent) -> None:
+                if estado["caido"]:
+                    raise ConnectionError("WebSocket desconectado")
+                entregados.append(e)
+
+            adaptador.suscribir(ws_intermitente)
+
+            await adaptador.ciclo(max_ticks=2)          # conexión sana
+            self.assertEqual(adaptador.pendientes(), 0)
+
+            estado["caido"] = True                       # se cae el WS
+            await adaptador.ciclo(max_ticks=3)
+            encolados = adaptador.pendientes()
+            self.assertEqual(encolados, 3 * len(SENSORES),
+                             "Los eventos del corte deben quedar encolados")
+
+            estado["caido"] = False                      # vuelve el WS
+            await adaptador.ciclo(max_ticks=1)
+            self.assertEqual(adaptador.pendientes(), 0,
+                             "Al reconectar la cola debe drenarse por completo")
+
+        asyncio.run(asyncio.wait_for(escenario(), timeout=30))
+
+        # 2 sanos + 3 encolados + 1 tras reconexión = 6 ticks completos, en orden
+        self.assertEqual(len(entregados), 6 * len(SENSORES))
+        ts_por_fuente: dict = {}
+        for e in entregados:
+            if e.fuente in ts_por_fuente:
+                self.assertGreaterEqual(e.ts, ts_por_fuente[e.fuente],
+                                        "La re-entrega debe conservar el orden")
+            ts_por_fuente[e.fuente] = e.ts
+
     def test_06_alternar_pausa_una_fuente(self):
         """alternar() detiene la difusión de una fuente sin afectar el resto."""
         recibidos: list[MetricEvent] = []
