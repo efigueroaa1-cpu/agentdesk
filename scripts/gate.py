@@ -50,7 +50,8 @@ LEGACY_OVERSIZE: dict[str, int] = {
     "agentdesk-dashboard/src/components/pipeline/PipelineControl.jsx":  1050,
     "agentdesk-dashboard/src/components/proyectos/ProyectosModule.jsx": 1127,
     "agentdesk-dashboard/src/components/settings/SecurityPanel.jsx":     898,
-    "core/api.py":                                                      2865,
+    # api.py bajo 2865->1493 (2026-07-14, ADR-0003): trinquete apretado
+    "core/api.py":                                                      1493,
     "core/orchestrator.py":                                             1215,
     # tools.py subio 1120->1153 (2026-07-14): evaluador AST que reemplaza eval()
     "core/tools.py":                                                    1153,

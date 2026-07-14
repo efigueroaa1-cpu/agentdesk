@@ -140,7 +140,19 @@ _orquestador:   object | None        = None   # Orquestador (tipado como object 
 # este módulo en tiempo de llamada, así el servicio ve el bridge/orquestador
 # vigentes sin importar la capa api (ADR-0002).
 from core.services.agent_service import AgentService
+from core.services.orchestrator_service import OrchestratorService
+from core.services.pipeline_service import pipeline_service as _pipeline_service
+from core.services import analytics_service as _analytics
+from core.services import insights_service as _insights
+from core.services import upload_service as _uploads
+from core.services import report_service as _reports
+
 _agent_service = AgentService(
+    get_orquestador=lambda: _orquestador,
+    get_bridge=lambda: _bridge,
+    broadcast=lambda msg: manager.broadcast(msg),
+)
+_orch_service = OrchestratorService(
     get_orquestador=lambda: _orquestador,
     get_bridge=lambda: _bridge,
     broadcast=lambda msg: manager.broadcast(msg),
@@ -388,47 +400,13 @@ async def ejecutar_todos() -> dict:
 @app.get("/logs")
 async def get_logs(n: int = 100, nivel: str = "all") -> dict:
     """Devuelve las últimas N entradas del log sistema.log como JSON."""
-    from core.path_manager import data_path
-    import json as _json
-    log_path = data_path("logs/sistema.log")
-    if not log_path.exists():
-        return {"entradas": [], "total": 0}
-    try:
-        lineas = log_path.read_text(encoding="utf-8").splitlines()
-        entradas = []
-        for l in lineas:
-            l = l.strip()
-            if not l.startswith("{"): continue
-            try:
-                e = _json.loads(l)
-                if nivel != "all" and e.get("level", "").upper() != nivel.upper():
-                    continue
-                entradas.append(e)
-            except Exception:
-                pass
-        entradas = entradas[-n:]
-        return {"entradas": list(reversed(entradas)), "total": len(entradas)}
-    except Exception as ex:
-        return {"entradas": [], "total": 0, "error": str(ex)}
+    return _analytics.leer_logs(n=n, nivel=nivel)
 
 
 @app.get("/reportes")
 async def listar_todos_reportes() -> dict:
     """Lista todos los reportes PDF de todos los agentes."""
-    from core.path_manager import REPORTES_DIR
-    if not REPORTES_DIR.exists():
-        return {"reportes": []}
-    archivos = []
-    for f in sorted(REPORTES_DIR.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
-        if f.suffix in (".pdf", ".md", ".json"):
-            archivos.append({
-                "nombre":    f.name,
-                "tipo":      f.suffix[1:],
-                "tamano_kb": round(f.stat().st_size / 1024, 1),
-                "mtime":     f.stat().st_mtime,
-                "url":       f"/reportes/{f.name}",
-            })
-    return {"reportes": archivos[:50]}
+    return _reports.listar_todos()
 
 
 from fastapi.responses import FileResponse as _FileResponse
@@ -436,10 +414,10 @@ from fastapi.responses import FileResponse as _FileResponse
 @app.get("/reportes/{nombre}")
 async def descargar_reporte_directo(nombre: str) -> _FileResponse:
     """Descarga un archivo de reportes por nombre."""
-    from core.path_manager import REPORTES_DIR
-    archivo = REPORTES_DIR / nombre
-    if not archivo.exists() or not archivo.is_file():
-        raise HTTPException(status_code=404, detail=f"Reporte '{nombre}' no encontrado.")
+    try:
+        archivo = _reports.ruta_reporte(nombre)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     media = "application/pdf" if archivo.suffix == ".pdf" else "text/plain"
     return _FileResponse(str(archivo), filename=nombre, media_type=media,
                          headers={"Content-Disposition": f'attachment; filename="{nombre}"'})
@@ -448,14 +426,11 @@ async def descargar_reporte_directo(nombre: str) -> _FileResponse:
 @app.get("/reportes/{nombre}/abrir")
 async def abrir_reporte_os(nombre: str) -> dict:
     """Abre el archivo con la aplicación predeterminada del sistema operativo."""
-    import os
-    from core.path_manager import REPORTES_DIR
-    archivo = REPORTES_DIR / nombre
-    if not archivo.exists() or not archivo.is_file():
-        raise HTTPException(status_code=404, detail=f"Reporte '{nombre}' no encontrado.")
     try:
-        os.startfile(str(archivo))
+        os.startfile(str(_reports.ruta_reporte(nombre)))
         return {"ok": True, "nombre": nombre}
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Error al abrir archivo: {exc}")
 
@@ -465,304 +440,19 @@ async def abrir_reporte_os(nombre: str) -> dict:
 @app.get("/dashboard/datos")
 async def dashboard_datos(agente_id: str = "", dias: int = 30) -> dict:
     """Retorna métricas y series para el dashboard de Analytics."""
-    from core.path_manager import REPORTES_DIR
-    from core.config_loader import load_config
-    from datetime import datetime as _dt, timedelta as _td
-
-    dias = max(7, min(365, int(dias)))
-
-    cfg = load_config()
-    _raw = cfg.get("agents", cfg.get("agentes", []))
-    if isinstance(_raw, list):
-        agentes_cfg = {a["id"]: a for a in _raw if isinstance(a, dict) and "id" in a}
-    elif isinstance(_raw, dict):
-        agentes_cfg = _raw
-    else:
-        agentes_cfg = {}
-
-    agente_info: dict = {}
-    if agente_id and agente_id in agentes_cfg:
-        a = agentes_cfg[agente_id]
-        agente_info = {
-            "id":     agente_id,
-            "nombre": a.get("nombre", agente_id),
-            "area":   a.get("area", "General"),
-            "modelo": a.get("modelo", ""),
-        }
-
-    # ── Métricas SQLite ───────────────────────────────────────────────────────
-    total_sesiones = total_mensajes = 0
-    actividad_raw: list = []
-    horaria_raw: list  = []
-    try:
-        from core.database import get_session
-        from core.memory import Conversacion, Mensaje
-        from sqlalchemy import func as _func
-
-        with get_session() as s:
-            q = s.query(Conversacion)
-            if agente_id:
-                q = q.filter(Conversacion.agente_id == agente_id)
-            total_sesiones = q.count()
-
-            qm = s.query(Mensaje)
-            if agente_id:
-                qm = qm.filter(Mensaje.agente_id == agente_id)
-            total_mensajes = qm.count()
-
-            hace_n = utcnow() - _td(days=dias)
-
-            # Daily activity
-            qa = (
-                s.query(
-                    _func.date(Mensaje.ts).label("dia"),
-                    _func.count(Mensaje.id).label("n"),
-                )
-                .filter(Mensaje.ts >= hace_n)
-            )
-            if agente_id:
-                qa = qa.filter(Mensaje.agente_id == agente_id)
-            actividad_raw = qa.group_by(_func.date(Mensaje.ts)).all()
-
-            # Hourly heatmap: [weekday 0-6] × [hour 0-23]
-            qh = (
-                s.query(
-                    _func.strftime("%w", Mensaje.ts).label("dow"),
-                    _func.strftime("%H", Mensaje.ts).label("hora"),
-                    _func.count(Mensaje.id).label("n"),
-                )
-                .filter(Mensaje.ts >= hace_n)
-            )
-            if agente_id:
-                qh = qh.filter(Mensaje.agente_id == agente_id)
-            horaria_raw = qh.group_by("dow", "hora").all()
-
-    except Exception as _e:
-        logger.warning("dashboard_datos DB: %s", _e)
-
-    # Build 7×24 hourly matrix (SQLite %w: 0=Sun … 6=Sat)
-    actividad_horaria = [[0] * 24 for _ in range(7)]
-    for row in horaria_raw:
-        try:
-            actividad_horaria[int(row.dow)][int(row.hora)] = int(row.n)
-        except Exception:
-            pass
-
-    # ── Reportes en disco ─────────────────────────────────────────────────────
-    rdir = REPORTES_DIR
-    todos_pdf = sorted(rdir.glob("*.pdf"), key=lambda x: x.stat().st_mtime, reverse=True) if rdir.exists() else []
-    nombre_clave = (agente_info.get("nombre") or "").replace(" ", "_")[:12].lower()
-    filtrados = [r for r in todos_pdf if nombre_clave and nombre_clave in r.stem.lower()] or todos_pdf
-
-    reportes_recientes = [
-        {
-            "nombre":    r.name,
-            "fecha":     _dt.fromtimestamp(r.stat().st_mtime).strftime("%d/%m/%Y %H:%M"),
-            "tamano_kb": round(r.stat().st_size / 1024, 1),
-        }
-        for r in filtrados[:12]
-    ]
-
-    # ── Series temporales ─────────────────────────────────────────────────────
-    hoy = utcnow().date()
-    act_dict = {str(row.dia): row.n for row in actividad_raw}
-    actividad_serie = [
-        {"fecha": (hoy - _td(days=i)).strftime("%d/%m"),
-         "mensajes": act_dict.get(str(hoy - _td(days=i)), 0)}
-        for i in range(dias - 1, -1, -1)
-    ]
-
-    rep_por_dia: dict[str, int] = {}
-    for r in filtrados:
-        d = _dt.fromtimestamp(r.stat().st_mtime).strftime("%d/%m")
-        rep_por_dia[d] = rep_por_dia.get(d, 0) + 1
-    reportes_serie = [
-        {"fecha": a["fecha"], "reportes": rep_por_dia.get(a["fecha"], 0)}
-        for a in actividad_serie
-    ]
-
-    return {
-        "agente": agente_info,
-        "dias":   dias,
-        "agentes_disponibles": [
-            {"id": k, "nombre": v.get("nombre", k), "area": v.get("area", "")}
-            for k, v in agentes_cfg.items()
-        ],
-        "kpis": {
-            "sesiones":  total_sesiones,
-            "mensajes":  total_mensajes,
-            "reportes":  len(filtrados),
-        },
-        "actividad_serie":    actividad_serie,
-        "reportes_serie":     reportes_serie,
-        "actividad_horaria":  actividad_horaria,
-        "reportes_recientes": reportes_recientes,
-    }
+    return _analytics.dashboard_datos(agente_id=agente_id, dias=dias)
 
 
 @app.get("/dashboard/briefing")
 async def dashboard_briefing(tema: str = "", agente_id: str = "") -> dict:
     """Busca información web sobre el tema usando Tavily y lo retorna como JSON estructurado."""
-    if not tema.strip():
-        return {"tema": "", "query": "", "agente": {}, "answer": "", "resultados": []}
-
-    from core.config_loader import load_config
-    from core.tools import _TAVILY_KEY
-    import httpx
-
-    cfg = load_config()
-    _raw = cfg.get("agents", cfg.get("agentes", []))
-    if isinstance(_raw, list):
-        agentes_cfg = {a["id"]: a for a in _raw if isinstance(a, dict) and "id" in a}
-    elif isinstance(_raw, dict):
-        agentes_cfg = _raw
-    else:
-        agentes_cfg = {}
-
-    agente_info: dict = {}
-    if agente_id and agente_id in agentes_cfg:
-        a = agentes_cfg[agente_id]
-        agente_info = {
-            "id":     agente_id,
-            "nombre": a.get("nombre", agente_id),
-            "area":   a.get("area", ""),
-        }
-
-    area  = agente_info.get("area", "")
-    query = f"{tema.strip()} {area}".strip() if area else tema.strip()
-
-    try:
-        async with httpx.AsyncClient(timeout=22) as client:
-            resp = await client.post(
-                "https://api.tavily.com/search",
-                json={
-                    "api_key":             _TAVILY_KEY,
-                    "query":               query,
-                    "max_results":         8,
-                    "search_depth":        "advanced",
-                    "include_answer":      True,
-                    "include_raw_content": False,
-                },
-            )
-            resp.raise_for_status()
-            data = resp.json()
-
-        resultados = [
-            {
-                "titulo":  r.get("title", ""),
-                "url":     r.get("url", ""),
-                "dominio": (r.get("url", "").split("/")[2] if r.get("url", "").startswith("http") else ""),
-                "snippet": (r.get("content") or "")[:380],
-                "score":   round(r.get("score", 0), 2),
-            }
-            for r in data.get("results", [])
-        ]
-
-        # Generar resumen en español usando Groq directamente (vault key)
-        answer_es = ""
-        try:
-            import asyncio
-            from core.key_vault import obtener_key as _get_key
-            from groq import AsyncGroq as _GroqClient
-            _groq_key = _get_key("GROQ_API_KEY") or ""
-            if _groq_key:
-                snippets_text = "\n\n".join(
-                    f"[{r['dominio']}] {r['snippet']}" for r in resultados[:5] if r["snippet"]
-                )
-                llm_prompt = (
-                    f"Basándote en esta información sobre \"{tema.strip()}\", escribe UN PÁRRAFO BREVE "
-                    f"(3-5 oraciones) en ESPAÑOL con los datos más importantes: resultados financieros, "
-                    f"producción, noticias recientes, o lo que sea más relevante.\n\n"
-                    f"INFORMACIÓN:\n{snippets_text}\n\n"
-                    f"REGLAS: Responde SOLO en español. Sin introducción. Sin títulos. Solo el párrafo directo."
-                )
-                async def _groq_summarize():
-                    _c = _GroqClient(api_key=_groq_key)
-                    _r = await _c.chat.completions.create(
-                        model="llama-3.3-70b-versatile",
-                        messages=[{"role": "user", "content": llm_prompt}],
-                        temperature=0.3,
-                        max_tokens=300,
-                    )
-                    return _r.choices[0].message.content.strip()
-                answer_es = await asyncio.wait_for(_groq_summarize(), timeout=12)
-        except Exception as _llm_e:
-            logger.warning("dashboard_briefing llm summary: %s", _llm_e)
-        if not answer_es:
-            answer_es = data.get("answer", "")  # fallback to Tavily's answer
-
-        return {
-            "tema":       tema.strip(),
-            "query":      query,
-            "agente":     agente_info,
-            "answer":     answer_es,
-            "resultados": resultados,
-        }
-    except Exception as _e:
-        logger.warning("dashboard_briefing: %s", _e)
-        return {"tema": tema, "query": query, "agente": agente_info, "answer": "", "resultados": [], "error": str(_e)}
+    return await _insights.briefing(tema=tema, agente_id=agente_id)
 
 
 @app.get("/dashboard/resumen-ia")
 async def dashboard_resumen_ia(dias: int = 30, agente_id: str = "") -> dict:
     """Genera un resumen ejecutivo en español con el LLM usando los datos del dashboard."""
-    import asyncio
-    from core.key_vault import obtener_key as _get_key
-
-    # Reutilizar endpoint de datos para obtener KPIs reales
-    base = await dashboard_datos(dias=dias, agente_id=agente_id)
-    kpis  = base.get("kpis", {})
-    serie = base.get("actividad_serie", [])
-    rep_serie = base.get("reportes_serie", [])
-
-    last7  = sum(d["mensajes"] for d in serie[-7:])
-    prev7  = sum(d["mensajes"] for d in serie[-14:-7])
-    chg7   = round((last7-prev7)/prev7*100) if prev7 > 0 else None
-    reps_sem = sum(d["reportes"] for d in rep_serie[-7:])
-
-    ctx = (
-        f"Sistema de agentes IA · últimos {dias} días:\n"
-        f"- Sesiones: {kpis.get('sesiones',0)}\n"
-        f"- Mensajes totales: {kpis.get('mensajes',0)}\n"
-        f"- Mensajes últimos 7 días: {last7}"
-        + (f" ({'+' if (chg7 or 0)>=0 else ''}{chg7}% vs semana anterior)" if chg7 is not None else "") + "\n"
-        f"- Mensajes por sesión: {round(kpis.get('mensajes',0)/kpis.get('sesiones',1),1) if kpis.get('sesiones',0)>0 else 0}\n"
-        f"- Reportes PDF totales: {kpis.get('reportes',0)}\n"
-        f"- Reportes PDF última semana: {reps_sem}\n"
-    )
-    if agente_id:
-        ctx += f"- Filtrado para agente: {agente_id}\n"
-
-    prompt = (
-        f"Eres un analista de productividad. Analiza estos datos de uso de un sistema de agentes IA "
-        f"y escribe un resumen ejecutivo en ESPAÑOL con 3 párrafos cortos:\n\n"
-        f"1. Estado actual y tendencia de actividad\n"
-        f"2. Eficiencia y productividad (reportes, calidad de sesiones)\n"
-        f"3. Una recomendación concreta y accionable\n\n"
-        f"DATOS:\n{ctx}\n\n"
-        f"REGLAS: Solo en español. Sin títulos ni numeración. Lenguaje claro, directo, sin jerga técnica."
-    )
-
-    try:
-        from groq import AsyncGroq as _GroqClient
-        _key = _get_key("GROQ_API_KEY") or ""
-        if not _key:
-            return {"resumen": "", "error": "Sin clave Groq"}
-
-        async def _call():
-            c = _GroqClient(api_key=_key)
-            r = await c.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.4, max_tokens=450,
-            )
-            return r.choices[0].message.content.strip()
-
-        resumen = await asyncio.wait_for(_call(), timeout=18)
-        return {"resumen": resumen}
-    except Exception as e:
-        logger.warning("dashboard_resumen_ia: %s", e)
-        return {"resumen": "", "error": str(e)}
+    return await _insights.resumen_ia(dias=dias, agente_id=agente_id)
 
 
 @app.get("/dashboard/leer-pagina")
@@ -908,255 +598,16 @@ async def historial_global(limit: int = 100) -> dict:
     return {"historial": get_historial(limit=limit)}
 
 
-def _calcular_tendencia(valores: list[float]) -> str:
-    """
-    Calcula la tendencia de una serie usando regresion lineal minima.
-    Retorna 'mejorando', 'estable' o 'empeorando'.
-    Para tasa_exito: pendiente positiva = mejorando.
-    Para latencia_s: pendiente negativa = mejorando (menos tiempo = mejor).
-    """
-    n = len(valores)
-    if n < 3:
-        return "estable"
-    xs = list(range(n))
-    x_m = sum(xs) / n
-    y_m = sum(valores) / n
-    num = sum((xs[i] - x_m) * (valores[i] - y_m) for i in range(n))
-    den = sum((xs[i] - x_m) ** 2 for i in range(n))
-    if den == 0:
-        return "estable"
-    slope = num / den
-    # Umbral: cambio mayor al 2% del rango o 1 punto porcentual de exito
-    rango = max(valores) - min(valores)
-    umbral = max(rango * 0.05, 1.0)
-    if slope > umbral / n:
-        return "mejorando"
-    if slope < -umbral / n:
-        return "empeorando"
-    return "estable"
-
-
 @app.get("/tendencias/{agente_id}")
 async def tendencias_agente(agente_id: str, dias: int = 30) -> dict:
-    """
-    Tendencias de rendimiento de un agente en los ultimos N dias.
-    Primero intenta con Ejecucion (pipeline formal); si no hay datos
-    usa las conversaciones de chat como proxy de actividad.
-    La tendencia se calcula por regresion lineal, no por comparacion extremo a extremo.
-    """
-    from core.database import get_session, Ejecucion
-    from datetime import datetime as _dt, timedelta
-    from collections import defaultdict
-
-    desde = utcnow() - timedelta(days=dias)
-
-    # ── Intento 1: datos de ejecuciones del pipeline ──────────────────────────
-    with get_session() as s:
-        exec_rows = (
-            s.query(Ejecucion)
-            .filter(Ejecucion.agente_id == agente_id, Ejecucion.ts >= desde)
-            .order_by(Ejecucion.ts.asc())
-            .all()
-        )
-
-    if exec_rows:
-        dias_data: dict = {}
-        for r in exec_rows:
-            dia = r.ts.strftime("%Y-%m-%d") if r.ts else "?"
-            if dia not in dias_data:
-                dias_data[dia] = {"ok": 0, "fail": 0, "lats": []}
-            if r.exitoso:
-                dias_data[dia]["ok"] += 1
-            else:
-                dias_data[dia]["fail"] += 1
-            if r.duracion_s and r.duracion_s > 0:
-                dias_data[dia]["lats"].append(r.duracion_s)
-
-        puntos = []
-        for dia, d in sorted(dias_data.items()):
-            total    = d["ok"] + d["fail"]
-            lats     = d["lats"]
-            prom_lat = round(sum(lats)/len(lats), 3) if lats else None
-            puntos.append({
-                "fecha":      dia,
-                "total":      total,
-                "exitosas":   d["ok"],
-                "fallidas":   d["fail"],
-                "tasa_exito": round(d["ok"]/total*100, 1) if total else 0,
-                "latencia_s": prom_lat,
-            })
-
-        total_ok   = sum(d["ok"]   for d in dias_data.values())
-        total_fail = sum(d["fail"] for d in dias_data.values())
-        total_all  = total_ok + total_fail
-
-        # Tendencia de exito (pendiente positiva = mejorando)
-        tasas = [p["tasa_exito"] for p in puntos]
-        tend_exito = _calcular_tendencia(tasas)
-
-        # Tendencia de latencia (pendiente negativa = mejorando — menos tiempo es mejor)
-        lats_serie = [p["latencia_s"] for p in puntos if p["latencia_s"] is not None]
-        if len(lats_serie) >= 3:
-            tend_lat_raw = _calcular_tendencia(lats_serie)
-            # Invertir: pendiente negativa de latencia = "mejorando"
-            tend_lat = {"mejorando": "empeorando", "empeorando": "mejorando", "estable": "estable"}[tend_lat_raw]
-        else:
-            tend_lat = "sin datos"
-
-        todas_lats = [r.duracion_s for r in exec_rows if r.duracion_s and r.duracion_s > 0]
-        lat_prom   = round(sum(todas_lats) / len(todas_lats), 3) if todas_lats else None
-
-        return {
-            "agente_id": agente_id,
-            "dias":      dias,
-            "puntos":    puntos,
-            "fuente":    "pipeline",
-            "resumen": {
-                "total_ejecuciones":  total_all,
-                "tasa_exito_global":  round(total_ok/total_all*100, 1) if total_all else 0,
-                "latencia_prom_s":    lat_prom,
-                "tendencia":          tend_exito,
-                "tendencia_latencia": tend_lat,
-            },
-        }
-
-    # ── Intento 2: fallback a conversaciones de chat ──────────────────────────
-    try:
-        from core.memory import Conversacion as _Conv, Mensaje as _Msg
-        with get_session() as s:
-            convs = (
-                s.query(_Conv)
-                .filter(_Conv.agente_id == agente_id, _Conv.ts_inicio >= desde)
-                .all()
-            )
-            if not convs:
-                return {"puntos": [], "resumen": None}
-
-            conv_ids = [c.id for c in convs]
-            all_msgs = (
-                s.query(_Msg)
-                .filter(_Msg.conversacion_id.in_(conv_ids))
-                .order_by(_Msg.ts.asc())
-                .all()
-            )
-
-        # Agrupa mensajes por conversación
-        msgs_by_conv: dict = defaultdict(list)
-        for m in all_msgs:
-            msgs_by_conv[m.conversacion_id].append(m)
-
-        dias_data2: dict = {}
-
-        for conv in convs:
-            msgs = msgs_by_conv.get(conv.id, [])
-            if not msgs:
-                continue  # ignorar sesiones vacías
-            dia = conv.ts_inicio.strftime("%Y-%m-%d")
-            if dia not in dias_data2:
-                dias_data2[dia] = {"ok": 0, "fail": 0, "lats": []}
-
-            user_msgs  = [m for m in msgs if m.rol == "usuario"]
-            agent_msgs = [m for m in msgs if m.rol == "agente"]
-
-            if agent_msgs:
-                dias_data2[dia]["ok"] += 1
-                if user_msgs and user_msgs[0].ts and agent_msgs[0].ts:
-                    lat = (agent_msgs[0].ts - user_msgs[0].ts).total_seconds()
-                    if 0 < lat < 300:
-                        dias_data2[dia]["lats"].append(lat)
-            else:
-                dias_data2[dia]["fail"] += 1
-
-        if not dias_data2:
-            return {"puntos": [], "resumen": None}
-
-        puntos2 = []
-        for dia, d in sorted(dias_data2.items()):
-            total    = d["ok"] + d["fail"]
-            lats     = d["lats"]
-            prom_lat = round(sum(lats)/len(lats), 3) if lats else None
-            puntos2.append({
-                "fecha":      dia,
-                "total":      total,
-                "exitosas":   d["ok"],
-                "fallidas":   d["fail"],
-                "tasa_exito": round(d["ok"]/total*100, 1) if total else 0,
-                "latencia_s": prom_lat,
-            })
-
-        total_ok   = sum(d["ok"]   for d in dias_data2.values())
-        total_fail = sum(d["fail"] for d in dias_data2.values())
-        total_all  = total_ok + total_fail
-
-        tasas2 = [p["tasa_exito"] for p in puntos2]
-        tend_exito2 = _calcular_tendencia(tasas2)
-
-        lats2 = [p["latencia_s"] for p in puntos2 if p["latencia_s"] is not None]
-        if len(lats2) >= 3:
-            tend_lat2_raw = _calcular_tendencia(lats2)
-            tend_lat2 = {"mejorando": "empeorando", "empeorando": "mejorando", "estable": "estable"}[tend_lat2_raw]
-        else:
-            tend_lat2 = "sin datos"
-
-        todas_lats2 = [p["latencia_s"] for p in puntos2 if p["latencia_s"] is not None]
-        lat_prom2   = round(sum(todas_lats2)/len(todas_lats2), 3) if todas_lats2 else None
-
-        return {
-            "agente_id": agente_id,
-            "dias":      dias,
-            "puntos":    puntos2,
-            "fuente":    "conversaciones",
-            "resumen": {
-                "total_ejecuciones":  total_all,
-                "tasa_exito_global":  round(total_ok/total_all*100, 1) if total_all else 0,
-                "latencia_prom_s":    lat_prom2,
-                "tendencia":          tend_exito2,
-                "tendencia_latencia": tend_lat2,
-            },
-        }
-    except Exception:
-        return {"puntos": [], "resumen": None}
+    """Tendencias de rendimiento del agente (regresion lineal, analytics_service)."""
+    return await _analytics.tendencias_agente(agente_id, dias=dias)
 
 
 @app.get("/agentes-stats")
 async def agentes_stats_all() -> dict:
-    """
-    Devuelve estadísticas históricas de todos los agentes en el formato
-    que usa localStorage ('agentdesk-agent-stats-v2') para pre-popular el
-    Dashboard de Rendimiento al cargar la app.
-    """
-    config = load_config()
-    agents = config.get("agents", [])
-    stats: dict = {}
-    for ag in agents:
-        ag_id = ag.get("id", "")
-        if not ag_id:
-            continue
-        try:
-            data = await tendencias_agente(ag_id, dias=90)
-            resumen = data.get("resumen")
-            if not resumen:
-                continue
-            total = resumen.get("total_ejecuciones", 0)
-            tasa  = resumen.get("tasa_exito_global", 100)
-            ok    = round(total * tasa / 100)
-            fail  = total - ok
-            # Generar ultimasTareas con mínimo 2 entradas para que Mb() lo procese
-            n_ok   = max(ok, 2) if ok > 0 else 0
-            n_fail = max(fail, 1) if fail > 0 else 0
-            ultima_ts = None
-            puntos = data.get("puntos", [])
-            if puntos:
-                ultima_ts = puntos[-1].get("fecha")
-            stats[ag_id] = {
-                "ok":           ok,
-                "fail":         fail,
-                "ultimasTareas": (["ok"] * min(n_ok, 3) + ["fail"] * min(n_fail, 2))[-5:],
-                "ultima_ts":    ultima_ts,
-            }
-        except Exception:
-            continue
-    return {"stats": stats}
+    """Estadisticas historicas de todos los agentes (formato localStorage v2)."""
+    return await _analytics.agentes_stats(dias=90)
 
 
 # ── Auth JWT + RBAC: endpoints /auth/* movidos a core/api_auth.py ─────────────
@@ -1320,37 +771,16 @@ class EjecutarRequest(BaseModel):
 @app.get("/uploads")
 async def listar_uploads() -> dict:
     """Lista todos los archivos subidos disponibles para analizar."""
-    import json as _json
-    from core.path_manager import data_path
-    uploads_dir = data_path("uploads")
-    if not uploads_dir.exists():
-        return {"archivos": []}
-    archivos = []
-    for f in sorted(uploads_dir.glob("*.meta.json"), key=lambda x: x.stat().st_mtime, reverse=True):
-        try:
-            meta = _json.loads(f.read_text(encoding="utf-8"))
-            archivos.append(meta)
-        except Exception:
-            pass
-    return {"archivos": archivos[:30]}
+    return _uploads.listar_uploads()
 
 
 @app.get("/uploads/{archivo_id}/texto")
 async def get_upload_texto(archivo_id: str) -> dict:
     """Devuelve el contenido de texto de un archivo subido."""
-    import json as _json
-    from core.path_manager import data_path
-    uploads_dir = data_path("uploads")
-    meta_path   = uploads_dir / f"{archivo_id}.meta.json"
-    if not meta_path.exists():
-        raise HTTPException(status_code=404, detail="Archivo no encontrado.")
-    meta    = _json.loads(meta_path.read_text(encoding="utf-8"))
-    archivo = uploads_dir / meta["nombre_interno"]
-    if not archivo.exists():
-        raise HTTPException(status_code=404, detail="Contenido no encontrado.")
-    texto = archivo.read_bytes().decode("utf-8", errors="replace")[:20_000]
-    return {"archivo_id": archivo_id, "nombre": meta["nombre_original"],
-            "tipo": meta["tipo"], "texto": texto}
+    try:
+        return _uploads.texto_upload(archivo_id)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 
 @app.post("/agentes/{agente_id}/ejecutar")
@@ -1360,99 +790,13 @@ async def ejecutar_agente(agente_id: str, payload: EjecutarRequest) -> dict:
     Emite eventos de telemetría en tiempo real via WebSocket /ws/telemetria.
     Retorna el reporte final o un error detallado.
     """
-    if not kill_switch.is_active():
-        return {"error": "Kill switch activo."}
-    if _orquestador is None:
-        return {"error": "Orquestador no inicializado. Verifica GEMINI_API_KEY en el .env."}
-    if agente_id not in _orquestador.agentes:
-        raise HTTPException(status_code=404, detail=f"Agente '{agente_id}' no encontrado.")
-
-    await manager.broadcast({
-        "tipo":     "agente_ejecutando",
-        "agente_id": agente_id,
-        "tarea":    payload.tarea,
-    })
-
-    import time as _time
-    _t0 = _time.monotonic()
-
     try:
-        agente    = _orquestador.agentes[agente_id]
-        # Resolver datos: archivo_id > datos_extra > tarea normal
-        datos_texto = None
-        if payload.archivo_id:
-            import json as _json
-            from core.path_manager import data_path
-            uploads_dir = data_path("uploads")
-            meta_path   = uploads_dir / f"{payload.archivo_id}.meta.json"
-            if meta_path.exists():
-                meta  = _json.loads(meta_path.read_text(encoding="utf-8"))
-                fpath = uploads_dir / meta["nombre_interno"]
-                if fpath.exists():
-                    datos_texto = fpath.read_bytes().decode("utf-8", errors="replace")[:18_000]
-        elif payload.datos_extra:
-            datos_texto = payload.datos_extra
-
-        if datos_texto:
-            resultado = await agente.realizar_tarea_con_datos(datos_texto)
-        else:
-            resultado = await agente.realizar_tarea(payload.tarea)
-
-        duracion_s = round(_time.monotonic() - _t0, 3)
-
-        if resultado is None:
-            await manager.broadcast({"tipo":"tarea_abortada","agente_id":agente_id,"tarea":payload.tarea})
-            try:
-                from core.database import guardar_ejecucion
-                guardar_ejecucion(agente_id=agente_id,
-                    agente_nombre=_orquestador.agentes[agente_id].nombre,
-                    tarea=payload.tarea, exitoso=False, duracion_s=duracion_s,
-                    resumen="Abortado por guardrails")
-            except Exception: pass
-            return {"ok": False, "agente_id": agente_id,
-                    "motivo": "Pipeline abortado por guardrails. Ve a Pipeline -> Feed de Errores para ver el detalle."}
-
-        # Error de API (cuota, red, etc.) — distinto de un abort del pipeline
-        if isinstance(resultado, dict) and resultado.get("_api_error"):
-            msg = resultado.get("_api_msg", "Error de API")
-            await manager.broadcast({"tipo":"tarea_error","agente_id":agente_id,"error":msg})
-            try:
-                from core.database import guardar_ejecucion
-                guardar_ejecucion(agente_id=agente_id,
-                    agente_nombre=_orquestador.agentes[agente_id].nombre,
-                    tarea=payload.tarea, exitoso=False, duracion_s=duracion_s, resumen=msg)
-            except Exception: pass
-            return {"ok": False, "agente_id": agente_id, "motivo": msg}
-
-        await manager.broadcast({
-            "tipo":      "tarea_completada",
-            "agente_id": agente_id,
-            "tarea":     payload.tarea,
-            "resumen":   resultado.get("resumen", "")[:200],
-            "duracion_s": duracion_s,
-        })
-        agente_nombre = _orquestador.agentes[agente_id].nombre
-        # Guardar en SQLite con duracion_s real para metricas historicas exactas
-        try:
-            from core.database import guardar_ejecucion
-            guardar_ejecucion(
-                agente_id=agente_id, agente_nombre=agente_nombre,
-                tarea=payload.tarea, exitoso=True, duracion_s=duracion_s,
-                resumen=resultado.get("resumen","")[:500] if resultado else "",
-                kpis=resultado.get("kpis",{}) if resultado else {},
-                archivo_id=payload.archivo_id,
-            )
-        except Exception: pass
-        return {"ok": True, "agente_id": agente_id,
-                "agente_nombre": agente_nombre, "resultado": resultado}
-
-    except Exception as exc:
-        await manager.broadcast({
-            "tipo":      "tarea_error",
-            "agente_id": agente_id,
-            "error":     str(exc),
-        })
-        return {"ok": False, "agente_id": agente_id, "error": str(exc)}
+        return await _orch_service.ejecutar_tarea(
+            agente_id, payload.tarea,
+            datos_extra=payload.datos_extra, archivo_id=payload.archivo_id,
+        )
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 
 @app.get("/agentes")
@@ -1542,60 +886,10 @@ class ChatRequest(BaseModel):
 @app.post("/chat")
 async def chat(payload: ChatRequest) -> dict:
     """Envía un mensaje conversacional a un agente. El orquestador elige el agente si no se especifica."""
-    if _orquestador is None:
-        return {"error": "Orquestador no disponible.", "respuesta": None}
-
-    agente    = None
-    agente_key = None
-    if payload.agente_id and payload.agente_id in _orquestador.agentes:
-        agente_key = payload.agente_id
-        agente     = _orquestador.agentes[agente_key]
-    else:
-        msg_lower = payload.mensaje.lower()
-        for k, ag in _orquestador.agentes.items():
-            if (ag.area or "").lower() in msg_lower:
-                agente_key, agente = k, ag
-                break
-        if agente is None and _orquestador.agentes:
-            agente_key, agente = next(iter(_orquestador.agentes.items()))
-
-    if agente is None:
-        return {"error": "No hay agentes disponibles.", "respuesta": None}
-
-    # Con Tool Calling, el agente lee el archivo solo via leer_archivo()
-    # El archivo_id se pasa directamente al agente como hint en su system prompt
-    await manager.broadcast({"tipo": "chat_procesando",
-                              "agente_id": agente_key,
-                              "agente_nombre": agente.nombre})
-    import asyncio as _asyncio
-    try:
-        # Tool Calling automático (Groq/OpenAI) con fallback a chat_libre
-        herramientas_usadas: list[str] = []
-        respuesta_tuple = await _asyncio.wait_for(
-            agente.chat_con_herramientas(
-                payload.mensaje,
-                sesion_id       = payload.sesion_id,
-                agente_id_clave = agente_key,
-                archivo_id      = payload.archivo_id,   # pasa el archivo al agente
-            ),
-            timeout=90.0,
-        )
-        respuesta, herramientas_usadas = respuesta_tuple
-        if herramientas_usadas:
-            await manager.broadcast({
-                "tipo":        "herramientas_usadas",
-                "agente_id":   agente_key,
-                "herramientas":herramientas_usadas,
-            })
-    except _asyncio.TimeoutError:
-        respuesta = "⏰ El agente tardó más de 90 segundos. Intenta de nuevo."
-    await manager.broadcast({"tipo": "chat_respuesta",
-                              "agente_id": agente_key,
-                              "agente_nombre": agente.nombre})
-
-    logger.info("chat '%s': respondido", agente.nombre, extra={"agente": agente.nombre})
-    return {"respuesta": respuesta, "agente_id": agente_key,
-            "agente_nombre": agente.nombre, "agente_area": agente.area}
+    return await _orch_service.chat(
+        payload.mensaje, agente_id=payload.agente_id,
+        archivo_id=payload.archivo_id, sesion_id=payload.sesion_id,
+    )
 
 
 @app.get("/memoria/{agente_id}/sesiones")
@@ -1626,73 +920,18 @@ from fastapi.responses import StreamingResponse as _StreamingResponse
 async def chat_stream(payload: ChatRequest) -> _StreamingResponse:
     """
     Versión STREAMING del chat — devuelve Server-Sent Events (SSE).
-    El frontend lee los chunks y muestra texto conforme llega.
+    El motor genera eventos dict (orchestrator_service); aquí solo se
+    serializan a SSE — puro adaptador de transporte.
     """
     import json as _json
 
-    if _orquestador is None:
-        async def _err():
-            yield f"data: {_json.dumps({'error': 'Orquestador no disponible'})}\n\n"
-            yield "data: [DONE]\n\n"
-        return _StreamingResponse(_err(), media_type="text/event-stream")
-
-    # Encontrar agente
-    agente     = None
-    agente_key = None
-    if payload.agente_id and payload.agente_id in _orquestador.agentes:
-        agente_key = payload.agente_id
-        agente     = _orquestador.agentes[agente_key]
-    else:
-        msg_lower = payload.mensaje.lower()
-        for k, ag in _orquestador.agentes.items():
-            if (ag.area or "").lower() in msg_lower:
-                agente_key, agente = k, ag; break
-        if agente is None and _orquestador.agentes:
-            agente_key, agente = next(iter(_orquestador.agentes.items()))
-
-    if agente is None:
-        async def _no_agent():
-            yield f"data: {_json.dumps({'error': 'No hay agentes disponibles'})}\n\n"
-            yield "data: [DONE]\n\n"
-        return _StreamingResponse(_no_agent(), media_type="text/event-stream")
-
     async def event_generator():
-        import asyncio as _asyncio
-        texto_completo = ""
-        yield f"data: {_json.dumps({'tipo': 'inicio', 'agente_nombre': agente.nombre, 'agente_area': agente.area, 'agente_id': agente_key})}\n\n"
-
-        # Timeout por PASO (no por conversación completa): chat_con_herramientas_stream
-        # puede encadenar hasta MAX_PASOS=6 llamadas al modelo (una por herramienta
-        # invocada) antes de la respuesta final en streaming. Un límite fijo de 90s
-        # para todo el intercambio cortaba conversaciones con varias herramientas
-        # que seguían avanzando con normalidad; ahora cada paso individual (una
-        # llamada al modelo o una herramienta) tiene su propio margen, y la
-        # conversación completa puede tardar lo que necesite mientras siga avanzando.
-        PASO_TIMEOUT_S = 45.0
-        try:
-            aiter = agente.chat_con_herramientas_stream(
-                payload.mensaje,
-                sesion_id       = payload.sesion_id,
-                agente_id_clave = agente_key,
-                archivo_id      = payload.archivo_id,
-            ).__aiter__()
-
-            while True:
-                try:
-                    evento = await _asyncio.wait_for(aiter.__anext__(), timeout=PASO_TIMEOUT_S)
-                except StopAsyncIteration:
-                    break
-                if evento.get("tipo") == "chunk":
-                    texto_completo += evento["chunk"]
-                yield f"data: {_json.dumps(evento, ensure_ascii=False)}\n\n"
-
-        except _asyncio.TimeoutError:
-            yield f"data: {_json.dumps({'tipo': 'error', 'error': f'Tiempo de espera agotado ({int(PASO_TIMEOUT_S)}s) esperando un paso del modelo. Intenta de nuevo.'})}\n\n"
-        except Exception as exc:
-            yield f"data: {_json.dumps({'tipo': 'error', 'error': str(exc)})}\n\n"
-        finally:
-            yield f"data: {_json.dumps({'tipo': 'fin', 'texto_completo': texto_completo})}\n\n"
-            yield "data: [DONE]\n\n"
+        async for evento in _orch_service.chat_stream(
+            payload.mensaje, agente_id=payload.agente_id,
+            archivo_id=payload.archivo_id, sesion_id=payload.sesion_id,
+        ):
+            yield f"data: {_json.dumps(evento, ensure_ascii=False)}\n\n"
+        yield "data: [DONE]\n\n"
 
     return _StreamingResponse(
         event_generator(),
@@ -1708,74 +947,8 @@ async def chat_stream(payload: ChatRequest) -> _StreamingResponse:
 @app.post("/upload")
 async def upload_archivo(archivo: UploadFile = _File(...)) -> dict:
     """Sube un archivo para análisis. Devuelve archivo_id + preview de CSV/Excel."""
-    import uuid, json as _json
-    from core.path_manager import data_path
-    uploads_dir = data_path("uploads")
-    uploads_dir.mkdir(parents=True, exist_ok=True)
-
-    archivo_id      = str(uuid.uuid4())[:8]
-    nombre_original = archivo.filename or "archivo"
-    ext             = nombre_original.rsplit(".", 1)[-1].lower() if "." in nombre_original else "bin"
-    nombre_interno  = f"{archivo_id}.{ext}"
-    contenido       = await archivo.read()
-    ruta            = uploads_dir / nombre_interno
-    ruta.write_bytes(contenido)
-
-    # ── Preview de datos estructurados ────────────────────────────────────────
-    preview: dict = {}
-    try:
-        if ext == "csv":
-            import io, csv
-            texto = contenido.decode("utf-8", errors="replace")
-            # Detectar separador automáticamente
-            dialecto = csv.Sniffer().sniff(texto[:4096], delimiters=",;\t|")
-            reader   = csv.DictReader(io.StringIO(texto), dialect=dialecto)
-            columnas = reader.fieldnames or []
-            filas    = [row for _, row in zip(range(5), reader)]
-            preview  = {
-                "columnas":    list(columnas),
-                "n_columnas":  len(columnas),
-                "muestra":     filas,
-                "separador":   dialecto.delimiter,
-                "total_lineas": texto.count("\n"),
-            }
-        elif ext in ("xlsx", "xls"):
-            import openpyxl
-            wb    = openpyxl.load_workbook(ruta, read_only=True, data_only=True)
-            sheet = wb.active
-            filas_raw = list(sheet.iter_rows(min_row=1, max_row=6, values_only=True))
-            if filas_raw:
-                encabezado = [str(c) if c is not None else "" for c in filas_raw[0]]
-                muestra    = [
-                    {encabezado[i]: str(v) if v is not None else ""
-                     for i, v in enumerate(fila)}
-                    for fila in filas_raw[1:]
-                ]
-                preview = {
-                    "columnas":   encabezado,
-                    "n_columnas": len(encabezado),
-                    "muestra":    muestra,
-                    "hojas":      wb.sheetnames,
-                    "total_filas": sheet.max_row,
-                }
-            wb.close()
-    except Exception as exc:
-        logger.debug("upload preview error (%s): %s", ext, exc)
-
-    meta = {
-        "archivo_id": archivo_id, "nombre_original": nombre_original,
-        "nombre_interno": nombre_interno, "tipo": ext,
-        "tamano_bytes": len(contenido), "preview": preview,
-    }
-    (uploads_dir / f"{archivo_id}.meta.json").write_text(
-        _json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
-    logger.info("Archivo subido: %s (%d bytes) — %d columnas detectadas",
-                nombre_original, len(contenido), len(preview.get("columnas", [])))
-    return {
-        "archivo_id": archivo_id, "nombre": nombre_original,
-        "tipo": ext, "tamano_kb": round(len(contenido) / 1024, 1),
-        "preview": preview,
-    }
+    contenido = await archivo.read()
+    return _uploads.guardar_upload(archivo.filename or "archivo", contenido)
 
 
 class GenerarPDFRequest(BaseModel):
@@ -1816,24 +989,7 @@ async def generar_pdf(payload: GenerarPDFRequest) -> dict:
 @app.get("/alertas/config")
 async def get_alertas_config() -> dict:
     """Lee la configuración de umbrales para alertas económicas."""
-    from core.path_manager import data_path
-    import json as _json
-    cfg_path = data_path("alertas_config.json")
-    defaults = {
-        "umbrales": {
-            "dolar_max": 1000,
-            "dolar_min": 800,
-            "uf_max":    45000,
-            "ipc_max":   1.0,
-        }
-    }
-    if cfg_path.exists():
-        try:
-            stored = _json.loads(cfg_path.read_text(encoding="utf-8"))
-            return {"config": {**defaults, **stored}}
-        except Exception:
-            pass
-    return {"config": defaults}
+    return _pipeline_service.get_alertas_config()
 
 
 class AlertasConfigRequest(BaseModel):
@@ -1846,21 +1002,7 @@ class AlertasConfigRequest(BaseModel):
 @app.put("/alertas/config")
 async def set_alertas_config(payload: AlertasConfigRequest) -> dict:
     """Actualiza umbrales de alertas económicas."""
-    from core.path_manager import data_path
-    import json as _json
-    cfg_path = data_path("alertas_config.json")
-    data_path("").mkdir(parents=True, exist_ok=True)
-
-    current = {"umbrales": {}}
-    if cfg_path.exists():
-        try: current = _json.loads(cfg_path.read_text(encoding="utf-8"))
-        except Exception: pass
-
-    updates = {k: v for k, v in payload.model_dump().items() if v is not None}
-    current.setdefault("umbrales", {}).update(updates)
-    cfg_path.write_text(_json.dumps(current, indent=2), encoding="utf-8")
-    logger.info("Alertas config actualizada: %s", updates)
-    return {"ok": True, "config": current}
+    return _pipeline_service.set_alertas_config(payload.model_dump())
 
 
 @app.get("/indicadores/live")
@@ -1881,22 +1023,7 @@ async def indicadores_live() -> dict:
 @app.get("/pipeline/config")
 async def get_pipeline_config() -> dict:
     """Lee la configuración de umbrales de los guardrails."""
-    from core.path_manager import data_path
-    import json as _json
-    cfg_path = data_path("pipeline_config.json")
-    defaults = {
-        "recursion_umbral": 3,
-        "grounding_min":    1000,
-        "logic_factor":     100,
-        "timeout_s":        5,
-    }
-    if cfg_path.exists():
-        try:
-            stored = _json.loads(cfg_path.read_text(encoding="utf-8"))
-            return {"config": {**defaults, **stored}}
-        except Exception:
-            pass
-    return {"config": defaults}
+    return _pipeline_service.get_config()
 
 
 class PipelineConfigRequest(BaseModel):
@@ -1912,22 +1039,7 @@ async def set_pipeline_config(payload: PipelineConfigRequest) -> dict:
     Actualiza los umbrales de los guardrails.
     Los cambios se aplican en la próxima ejecución de agentes.
     """
-    from core.path_manager import data_path
-    import json as _json
-    cfg_path = data_path("pipeline_config.json")
-    data_path("").mkdir(parents=True, exist_ok=True)
-
-    current = {}
-    if cfg_path.exists():
-        try: current = _json.loads(cfg_path.read_text(encoding="utf-8"))
-        except Exception: pass
-
-    updates = {k: v for k, v in payload.model_dump().items() if v is not None}
-    current.update(updates)
-    cfg_path.write_text(_json.dumps(current, indent=2), encoding="utf-8")
-
-    logger.info("Pipeline config actualizada", extra={"config": current})
-    return {"ok": True, "config": current}
+    return _pipeline_service.set_config(payload.model_dump())
 
 
 @app.get("/embeddings")
@@ -1936,49 +1048,7 @@ async def get_embeddings() -> dict:
     Embeddings semánticos reales usando TF-IDF + PCA.
     Los agentes similares (mismo dominio, mismos temas) quedan CERCANOS en 3D.
     """
-    from core.embeddings import calcular_embeddings
-    from core.database   import get_historial
-
-    # Construir lista de agentes con su configuración completa
-    agentes_lista = []
-    if _orquestador:
-        for aid, ag in _orquestador.agentes.items():
-            agentes_lista.append({
-                "id":           aid,
-                "nombre":       ag.nombre,
-                "area":         getattr(ag, "area", "General"),
-                "prompt_base":  getattr(ag, "prompt_base", ""),
-                "modelo":       ag.modelo,
-                "temperatura":  getattr(ag, "temperatura", 0.4),
-                "idioma":       getattr(ag, "idioma", "español"),
-            })
-
-    if not agentes_lista:
-        # Cargar desde config.json si el orquestador no está listo
-        try:
-            from core.config_loader import load_config
-            cfg = load_config()
-            agentes_lista = cfg.get("agents", [])
-        except Exception:
-            pass
-
-    # Historial de ejecuciones por agente para enriquecer embeddings
-    hist_por_agente = {}
-    try:
-        for ag in agentes_lista:
-            hist_por_agente[ag["id"]] = get_historial(agente_id=ag["id"], limit=10)
-    except Exception:
-        pass
-
-    # Calcular embeddings reales con TF-IDF + PCA
-    puntos = calcular_embeddings(agentes_lista, hist_por_agente)
-
-    return {
-        "puntos":  puntos,
-        "total":   len(puntos),
-        "metodo":  "TF-IDF + PCA (semántico real)" if len(agentes_lista) > 1 else "distribución circular",
-        "agentes": len(agentes_lista),
-    }
+    return _analytics.embeddings_3d(_orquestador)
 
 
 @app.get("/kill-switch")
@@ -2052,27 +1122,7 @@ async def crear_agente(payload: NuevoAgenteRequest) -> dict:
     return await _agent_service.crear(payload.model_dump())
 
 
-# ── Helpers PDF ───────────────────────────────────────────────────────────────
-
-def _slug(texto: str) -> str:
-    return texto.lower().replace(" ", "_").replace("-", "_")
-
-
-def _buscar_pdf(prefijo: str, agente_id: str) -> Path | None:
-    """
-    Busca el PDF más reciente con el prefijo dado para el agente.
-    Tolera tanto el ID crudo como su versión slug.
-    """
-    slug    = _slug(agente_id)
-    carpeta = REPORTES_DIR
-    if not carpeta.exists():
-        return None
-    patron  = re.compile(rf"^{re.escape(prefijo)}_{re.escape(slug)}_\d{{8}}_\d{{6}}\.pdf$")
-    matches = [f for f in carpeta.iterdir() if patron.match(f.name)]
-    return max(matches, key=lambda f: f.stat().st_mtime) if matches else None
-
-
-# ── Endpoints de reportes PDF ──────────────────────────────────────────────────
+# ── Endpoints de reportes PDF (lógica en report_service) ──────────────────────
 
 @app.get("/agentes/{agente_id}/reporte")
 async def descargar_reporte(agente_id: str) -> FileResponse:
@@ -2084,7 +1134,7 @@ async def descargar_reporte(agente_id: str) -> FileResponse:
 
     Responde 404 si el agente aún no tiene reportes (no ha ejecutado el pipeline).
     """
-    pdf = _buscar_pdf("reporte", agente_id)
+    pdf = _reports.buscar_pdf("reporte", agente_id)
     if not pdf:
         raise HTTPException(
             status_code=404,
@@ -2104,7 +1154,7 @@ async def descargar_reporte(agente_id: str) -> FileResponse:
 @app.get("/agentes/{agente_id}/correccion")
 async def descargar_correccion(agente_id: str) -> FileResponse:
     """Devuelve el PDF de corrección más reciente del agente."""
-    pdf = _buscar_pdf("correccion", agente_id)
+    pdf = _reports.buscar_pdf("correccion", agente_id)
     if not pdf:
         raise HTTPException(
             status_code=404,
@@ -2124,22 +1174,7 @@ async def listar_reportes(agente_id: str) -> dict:
     Lista todos los PDFs disponibles para el agente (éxito + correcciones).
     Ordenados por fecha descendente.
     """
-    slug    = _slug(agente_id)
-    carpeta = REPORTES_DIR
-    if not carpeta.exists():
-        return {"agente": agente_id, "reportes": []}
-
-    archivos = [
-        {
-            "nombre": f.name,
-            "tipo":   "correccion" if f.name.startswith("correccion_") else "reporte",
-            "mtime":  f.stat().st_mtime,
-        }
-        for f in carpeta.iterdir()
-        if f.suffix == ".pdf" and slug in f.name
-    ]
-    archivos.sort(key=lambda x: x["mtime"], reverse=True)
-    return {"agente": agente_id, "reportes": archivos}
+    return _reports.listar_por_agente(agente_id)
 
 
 # ── Motor Financiero ───────────────────────────────────────────────────────────
@@ -2303,7 +1338,8 @@ async def gantt_exportar_pdf(
     except RuntimeError:
         pass
 
-    pdf_bytes = _generar_pdf_gantt(proyecto, indicadores, agente_id=agente_id)
+    from core.services.gantt_report_service import generar_pdf_gantt
+    pdf_bytes = generar_pdf_gantt(proyecto, indicadores, agente_id=agente_id)
 
     nombre = f"avance_{proyecto_id}_{utcnow().strftime('%Y%m%d_%H%M')}.pdf"
     return _Response(
@@ -2313,242 +1349,6 @@ async def gantt_exportar_pdf(
     )
 
 
-def _generar_pdf_gantt(proyecto: dict, indicadores=None, _agente_id: str | None = None) -> bytes:
-    """Genera PDF de avance de obra usando primitivas fpdf (sin imágenes externas)."""
-    from fpdf import FPDF
-
-    AZUL_OSC = (10,  45,  95)
-    AZUL_MED = (26,  92, 140)
-    CYAN     = (0,  140, 190)
-    GRIS_OSC = (40,  50,  65)
-    GRIS_CLA = (235, 240, 245)
-    BLANCO   = (255, 255, 255)
-    CRITICO  = (220, 60,  60)
-
-    resumen   = proyecto["resumen"]
-    tareas    = proyecto["tareas"]
-    pid       = proyecto["proyecto_id"]
-
-    def _txt(s):
-        if not s:
-            return ""
-        for k, v in {"á":"a","é":"e","í":"i","ó":"o","ú":"u","ñ":"n","ü":"u",
-                     "Á":"A","É":"E","Í":"I","Ó":"O","Ú":"U","Ñ":"N"}.items():
-            s = s.replace(k, v)
-        return s.encode("latin-1", errors="replace").decode("latin-1")
-
-    class GanttPDF(FPDF):
-        def header(self):
-            if self.page_no() == 1:
-                return
-            self.set_fill_color(*AZUL_OSC)
-            self.rect(0, 0, 210, 10, "F")
-            self.set_y(2)
-            self.set_font("Helvetica", "B", 8)
-            self.set_text_color(*BLANCO)
-            self.cell(0, 6, _txt(f"Reporte de Avance - Proyecto: {pid}"), align="C")
-            self.set_text_color(0, 0, 0)
-            self.ln(10)
-
-        def footer(self):
-            self.set_y(-13)
-            self.set_draw_color(*CYAN)
-            self.set_line_width(0.4)
-            self.line(15, self.get_y(), 195, self.get_y())
-            self.set_font("Helvetica", "", 7)
-            self.set_text_color(*GRIS_OSC)
-            meses = ["enero","febrero","marzo","abril","mayo","junio",
-                     "julio","agosto","septiembre","octubre","noviembre","diciembre"]
-            n = utcnow()
-            fecha = f"{n.day} de {meses[n.month-1]} de {n.year}"
-            self.cell(0, 6, _txt(f"AgentDesk - {fecha} - Pag. {self.page_no()}"), align="C")
-
-    pdf = GanttPDF()
-    pdf.set_auto_page_break(auto=True, margin=18)
-    pdf.set_margins(12, 12, 12)
-
-    # ── Portada ─────────────────────────────────────────────────────────────────
-    pdf.add_page()
-    pdf.set_fill_color(*AZUL_OSC)
-    pdf.rect(0, 0, 210, 48, "F")
-    pdf.set_fill_color(*CYAN)
-    pdf.rect(0, 48, 210, 2.5, "F")
-
-    pdf.set_xy(10, 10)
-    pdf.set_font("Helvetica", "B", 18)
-    pdf.set_text_color(*BLANCO)
-    pdf.multi_cell(190, 9, "REPORTE DE AVANCE DE OBRA", align="C")
-    pdf.set_x(10)
-    pdf.set_font("Helvetica", "", 11)
-    pdf.set_text_color(170, 210, 235)
-    pdf.multi_cell(190, 7, _txt(f"Proyecto: {pid}"), align="C")
-
-    # Métricas portada
-    pdf.set_y(60)
-    meta = [
-        ("Avance Global",    f"{resumen.get('pct_avance', 0):.1f}%"),
-        ("Total Tareas",     str(resumen.get("total_tareas", 0))),
-        ("Tareas Criticas",  str(resumen.get("tareas_criticas", 0))),
-        ("Fecha Inicio",     (resumen.get("fecha_inicio") or "")[:10]),
-        ("Fecha Fin Plan",   (resumen.get("fecha_fin")    or "")[:10]),
-    ]
-    if indicadores:
-        meta += [
-            ("UF (BCCh)",    f"${indicadores.uf:,.2f} CLP"),
-            ("Dolar (BCCh)", f"${indicadores.dolar:,.2f} CLP"),
-            ("IPC",          f"{indicadores.ipc:.2f}%"),
-        ]
-    for k, v in meta:
-        pdf.set_x(20)
-        pdf.set_fill_color(*GRIS_CLA)
-        pdf.set_font("Helvetica", "B", 9)
-        pdf.set_text_color(*AZUL_MED)
-        pdf.cell(60, 7, _txt(k), border=0, fill=True)
-        pdf.set_font("Helvetica", "", 9)
-        pdf.set_text_color(*GRIS_OSC)
-        pdf.cell(0, 7, _txt(str(v)), border=0, fill=True, new_x="LMARGIN", new_y="NEXT")
-        pdf.ln(1)
-
-    # ── Cronograma Gantt (barras horizontales) ──────────────────────────────────
-    pdf.add_page()
-    pdf.set_font("Helvetica", "B", 13)
-    pdf.set_text_color(*AZUL_OSC)
-    pdf.cell(0, 9, "Cronograma de Tareas", new_x="LMARGIN", new_y="NEXT")
-    pdf.set_draw_color(*CYAN)
-    pdf.set_line_width(0.5)
-    pdf.line(12, pdf.get_y(), 198, pdf.get_y())
-    pdf.ln(3)
-
-    # Calcular escala de fechas
-    fechas_inicio = [t["inicio_plan"] for t in tareas if t["inicio_plan"]]
-    fechas_fin    = [t["fin_plan"]    for t in tareas if t["fin_plan"]]
-    if not fechas_inicio or not fechas_fin:
-        pdf.set_font("Helvetica", "", 9)
-        pdf.cell(0, 7, "Sin tareas con fechas definidas.")
-        return bytes(pdf.output())
-
-    t0 = datetime.fromisoformat(min(fechas_inicio)[:19])
-    t1 = datetime.fromisoformat(max(fechas_fin)[:19])
-    rango_dias = max(1, (t1 - t0).days)
-
-    COL_NOMBRE = 55
-    GAP        = 3
-    BAR_AREA   = 186 - 12 - COL_NOMBRE - GAP   # mm disponibles para barras
-    ROW_H      = 9
-    BAR_H      = 5.5
-    BAR_Y_OFF  = (ROW_H - BAR_H) / 2
-
-    # Cabecera de escala (semanas)
-    pdf.set_font("Helvetica", "", 6.5)
-    pdf.set_text_color(*GRIS_OSC)
-    pdf.set_x(12 + COL_NOMBRE + GAP)
-    semanas = max(1, rango_dias // 7)
-    ancho_sem = BAR_AREA / max(semanas, 1)
-    for i in range(min(semanas, 20)):
-        fecha_sem = t0 + timedelta(weeks=i)
-        pdf.cell(ancho_sem, 5, fecha_sem.strftime("%d/%m"), border=0, align="L")
-    pdf.ln(5)
-
-    # Filas de tareas
-    for tarea in tareas:
-        if pdf.get_y() > 270:
-            pdf.add_page()
-
-        y0 = pdf.get_y()
-        critica = tarea.get("en_ruta_critica", False)
-
-        # Nombre de la tarea
-        pdf.set_font("Helvetica", "B" if critica else "", 7.5)
-        pdf.set_text_color(*CRITICO if critica else GRIS_OSC)
-        pdf.set_x(12)
-        nombre_corto = _txt(tarea["nombre"])[:32]
-        pdf.cell(COL_NOMBRE, ROW_H, nombre_corto, border=0)
-
-        # Calcular posición de la barra
-        inicio_t = datetime.fromisoformat((tarea["inicio_plan"] or tarea.get("es") or "")[:19] or t0.isoformat())
-        fin_t    = datetime.fromisoformat((tarea["fin_plan"]    or tarea.get("ef") or "")[:19] or t1.isoformat())
-        x_start  = 12 + COL_NOMBRE + GAP + ((inicio_t - t0).days / rango_dias) * BAR_AREA
-        w_total  = max(2, ((fin_t - inicio_t).days / rango_dias) * BAR_AREA)
-        w_done   = w_total * (tarea["pct_completado"] / 100.0)
-
-        bar_y = y0 + BAR_Y_OFF
-
-        # Fondo de la barra (gris claro)
-        pdf.set_fill_color(*GRIS_CLA)
-        pdf.set_draw_color(*AZUL_MED)
-        pdf.set_line_width(0.3)
-        pdf.rect(x_start, bar_y, w_total, BAR_H, "FD")
-
-        # Progreso (relleno azul o rojo para críticas)
-        if w_done > 0:
-            r, g, b = (CRITICO if critica else (0, 140, 190))
-            pdf.set_fill_color(r, g, b)
-            pdf.rect(x_start, bar_y, w_done, BAR_H, "F")
-
-        # Etiqueta de porcentaje
-        pdf.set_font("Helvetica", "", 6)
-        pdf.set_text_color(*GRIS_OSC)
-        pdf.set_xy(x_start + w_total + 1, y0 + BAR_Y_OFF)
-        pdf.cell(12, BAR_H, f"{tarea['pct_completado']:.0f}%", border=0)
-
-        pdf.ln(ROW_H)
-
-    # ── Leyenda ─────────────────────────────────────────────────────────────────
-    pdf.ln(4)
-    pdf.set_font("Helvetica", "", 7)
-    pdf.set_fill_color(0, 140, 190)
-    pdf.rect(12, pdf.get_y(), 5, 3.5, "F")
-    pdf.set_x(19)
-    pdf.set_text_color(*GRIS_OSC)
-    pdf.cell(40, 3.5, "Avance real")
-    pdf.set_fill_color(*CRITICO)
-    pdf.rect(62, pdf.get_y(), 5, 3.5, "F")
-    pdf.set_x(69)
-    pdf.cell(0, 3.5, "Tarea en ruta critica")
-    pdf.ln(8)
-
-    # ── Tabla de tareas ──────────────────────────────────────────────────────────
-    pdf.set_font("Helvetica", "B", 9)
-    pdf.set_text_color(*AZUL_OSC)
-    pdf.cell(0, 7, "Detalle de Tareas", new_x="LMARGIN", new_y="NEXT")
-    pdf.set_line_width(0.4)
-    pdf.line(12, pdf.get_y(), 198, pdf.get_y())
-    pdf.ln(1)
-
-    cols = ["Tarea", "Agente", "Inicio Plan", "Fin Plan", "Dur.", "Avance", "Holgura", "Critica"]
-    widths = [52, 30, 22, 22, 10, 14, 14, 12]
-    pdf.set_fill_color(*AZUL_MED)
-    pdf.set_font("Helvetica", "B", 7)
-    pdf.set_text_color(*BLANCO)
-    for col, w in zip(cols, widths):
-        pdf.cell(w, 6, col, fill=True, border=0)
-    pdf.ln(6)
-
-    pdf.set_font("Helvetica", "", 6.5)
-    for i, t in enumerate(tareas):
-        if pdf.get_y() > 275:
-            pdf.add_page()
-        fill = i % 2 == 0
-        pdf.set_fill_color(*GRIS_CLA)
-        pdf.set_text_color(*GRIS_OSC)
-        critica_txt = "SI" if t.get("en_ruta_critica") else "no"
-        fila = [
-            _txt(t["nombre"])[:28],
-            _txt(t.get("agente_id") or "—")[:16],
-            (t["inicio_plan"] or "")[:10],
-            (t["fin_plan"]    or "")[:10],
-            f"{t['duracion_dias']:.0f}d",
-            f"{t['pct_completado']:.0f}%",
-            f"{t.get('holgura_dias', 0):.1f}d",
-            critica_txt,
-        ]
-        for val, w in zip(fila, widths):
-            pdf.cell(w, 5.5, val, fill=fill, border=0)
-        pdf.ln(5.5)
-
-    return bytes(pdf.output())
-
-
 # ── Webhook WhatsApp / Control Remoto ─────────────────────────────────────────
 
 class WhatsAppWebhookPayload(BaseModel):
@@ -2556,13 +1356,6 @@ class WhatsAppWebhookPayload(BaseModel):
     mensaje:     str
     clave:       str            # contraseña en texto plano — validada contra MASTER_PASSWORD_HASH
     from_number: str = ""       # opcional: número origen para auditoría
-
-
-_WHATSAPP_COMANDOS = (
-    "  Status                 — estado del sistema y agentes cargados\n"
-    "  Reiniciar Agente <id>  — recarga la configuración de un agente\n"
-    "  Ayuda                  — lista de comandos\n"
-)
 
 
 @app.post("/webhook/whatsapp")
@@ -2598,44 +1391,12 @@ async def webhook_whatsapp(payload: WhatsAppWebhookPayload) -> dict:
     if not autorizado:
         raise HTTPException(401, detail="Clave inválida.")
 
-    cmd       = payload.mensaje.strip()
-    cmd_lower = cmd.lower()
-
     logger.info(
         "Webhook WhatsApp recibido de %s: %s",
         payload.from_number or "desconocido",
-        cmd,
+        payload.mensaje.strip(),
     )
-
-    # ── Status ─────────────────────────────────────────────────────────────────
-    if cmd_lower == "status":
-        n      = len(_orquestador.agentes) if _orquestador and hasattr(_orquestador, "agentes") else 0
-        activo = kill_switch.is_active()
-        return {
-            "respuesta": (
-                f"AgentDesk activo.\n"
-                f"Agentes cargados: {n}\n"
-                f"Kill switch: {'activo ✅' if activo else '⛔ desactivado'}"
-            )
-        }
-
-    # ── Reiniciar Agente <id> ───────────────────────────────────────────────
-    if cmd_lower.startswith("reiniciar agente "):
-        agente_id = cmd[len("Reiniciar Agente "):].strip()
-        if not agente_id:
-            return {"respuesta": "Uso: Reiniciar Agente <id_del_agente>"}
-        if not _bridge:
-            return {"respuesta": "Bridge no disponible — el orquestador no está en línea."}
-        await _bridge.send(Command(tipo=RELOAD_CONFIG, payload={"agente_id": agente_id}))
-        return {"respuesta": f"Recarga de '{agente_id}' encolada correctamente."}
-
-    # ── Ayuda ───────────────────────────────────────────────────────────────────
-    return {
-        "respuesta": (
-            f"Comando no reconocido: '{cmd}'.\n\n"
-            f"Comandos disponibles:\n{_WHATSAPP_COMANDOS}"
-        )
-    }
+    return {"respuesta": await _orch_service.comando_remoto(payload.mensaje)}
 
 
 # ── Compliance ────────────────────────────────────────────────────────────────
