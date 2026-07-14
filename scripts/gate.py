@@ -52,7 +52,8 @@ LEGACY_OVERSIZE: dict[str, int] = {
     "agentdesk-dashboard/src/components/settings/SecurityPanel.jsx":     898,
     # api.py bajo 2865->1493 (2026-07-14, ADR-0003): trinquete apretado
     "core/api.py":                                                      1493,
-    "core/orchestrator.py":                                             1215,
+    # orchestrator subio 1215->1223 (2026-07-14): hook del sandbox Zero-Trust
+    "core/orchestrator.py":                                             1223,
     # tools.py subio 1120->1153 (2026-07-14): evaluador AST que reemplaza eval()
     "core/tools.py":                                                    1153,
     # web_monitor.py subio 593->595 (2026-07-14): validacion de esquema http(s)
@@ -146,6 +147,27 @@ def check_imports(archivos: list[str]) -> list[str]:
     return errores
 
 
+# Ejecución peligrosa (Fase 7): eval() y shell=True quedan prohibidos en las
+# capas hexagonales — la única vía para subprocesos es el SubprocessRunner
+# del sandbox (shell=False por diseño). Patrón case-sensitive sobre código.
+RE_EJECUCION_PELIGROSA = re.compile(r"\beval\s*\(|\bshell\s*=\s*True\b")
+CAPAS_SIN_EJECUCION = ("core/services/", "core/adapters/", "core/domain/",
+                       "core/ports/", "core/repositories/")
+
+
+def check_ejecucion_peligrosa(archivos: list[str]) -> list[str]:
+    errores = []
+    for rel in archivos:
+        if not rel.endswith(".py") or not rel.startswith(CAPAS_SIN_EJECUCION):
+            continue
+        for n, linea in enumerate(leer(rel), 1):
+            sin_comentario = linea.split("#", 1)[0]
+            if RE_EJECUCION_PELIGROSA.search(sin_comentario):
+                errores.append(f"  [EXEC]    {rel}:{n}: {linea.strip()[:80]}  "
+                               f"<- eval()/shell=True prohibidos (usar sandbox_service)")
+    return errores
+
+
 def check_tests_adaptadores(archivos: list[str]) -> list[str]:
     """
     ADR-0004: cada adaptador industrial (core/adapters/<x>_adapter.py) debe
@@ -179,6 +201,11 @@ def check_bandit() -> list[str]:
 def check_contrato_auth() -> list[str]:
     """Test-contrato: toda escritura protegida por JWT o autorizada explícita."""
     return _correr_suite("tests.contract.test_auth_contract", "CONTRATO")
+
+
+def check_sandbox() -> list[str]:
+    """Fase 7: el blindaje de ejecución Zero-Trust debe seguir intacto."""
+    return _correr_suite("tests.sandbox.test_subprocess_runner", "SANDBOX")
 
 
 def check_telemetria_industrial() -> list[str]:
@@ -215,10 +242,12 @@ def main() -> int:
     errores += check_tags(archivos)
     errores += check_tamano(archivos)
     errores += check_imports(archivos)
+    errores += check_ejecucion_peligrosa(archivos)
     errores += check_tests_adaptadores(archivos)
     errores += check_bandit()
     errores += check_contrato_auth()
     errores += check_telemetria_industrial()
+    errores += check_sandbox()
 
     if errores:
         print(f"\nVIOLACIONES ({len(errores)}):")
@@ -228,7 +257,8 @@ def main() -> int:
         return 1
 
     print("OK: 0 etiquetas | 0 archivos nuevos >500 lineas | 0 violaciones de imports "
-          "| bandit limpio (media/alta) | contrato de auth 100% | telemetria industrial 100%")
+          "| sin eval()/shell=True | bandit limpio (media/alta) | contrato auth 100% "
+          "| telemetria industrial 100% | sandbox 100%")
     print("=== ARQUITECTURA APROBADA ===")
     return 0
 

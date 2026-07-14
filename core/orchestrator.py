@@ -941,6 +941,12 @@ class Orquestador:
             for a in self.config["agents"]
         }
 
+        # Sandbox Zero-Trust (Fase 7): cualquier subproceso disparado por un agente
+        # pasa por este runner (shell prohibida, entorno minimo sin API keys,
+        # limites de tiempo/memoria). Ver core/services/sandbox_service.py.
+        from core.services.sandbox_service import SubprocessRunner
+        self.sandbox = SubprocessRunner()
+
         os.makedirs("reportes", exist_ok=True)
 
     # ── Recarga dinámica ───────────────────────────────────────────────────────
