@@ -15,24 +15,17 @@ logger = logging.getLogger(__name__)
 
 
 async def _groq_resumen(prompt: str, max_tokens: int, timeout_s: float) -> str:
-    """Llamada directa a Groq (llave del vault). Lanza si no hay clave."""
-    from core.key_vault import obtener_key as _get_key
-    from groq import AsyncGroq as _GroqClient
-    _key = _get_key("GROQ_API_KEY") or ""
-    if not _key:
-        raise RuntimeError("Sin clave Groq")
-
-    async def _call():
-        c = _GroqClient(api_key=_key)
-        r = await c.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.3 if max_tokens <= 300 else 0.4,
-            max_tokens=max_tokens,
-        )
-        return r.choices[0].message.content.strip()
-
-    return await asyncio.wait_for(_call(), timeout=timeout_s)
+    """
+    Resumen vía cadena resiliente (Fase 8): Groq → Gemini → OpenAI → Mock,
+    con Circuit Breaker por proveedor. Nunca deja al dashboard sin respuesta.
+    (Conserva el nombre histórico; max_tokens/timeout_s los gobierna la cadena.)
+    """
+    from core.services.llm_service import llm_service
+    temperatura = 0.3 if max_tokens <= 300 else 0.4
+    # Sin timeout externo: la cadena ya limita cada eslabón (30 s) y degrada
+    # a mock antes que dejar colgado al dashboard.
+    resultado = await llm_service.generar(prompt, temperatura=temperatura, prioridad=2)
+    return resultado["texto"]
 
 
 async def briefing(tema: str, agente_id: str = "") -> dict:
