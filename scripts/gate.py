@@ -50,8 +50,9 @@ LEGACY_OVERSIZE: dict[str, int] = {
     "agentdesk-dashboard/src/components/pipeline/PipelineControl.jsx":  1050,
     "agentdesk-dashboard/src/components/proyectos/ProyectosModule.jsx": 1127,
     "agentdesk-dashboard/src/components/settings/SecurityPanel.jsx":     898,
-    # api.py 2865->1493 (ADR-0003); +3 (2026-07-14, Fase 8): cableo del QueuePort
-    "core/api.py":                                                      1496,
+    # api.py 2865->1493 (ADR-0003); +3 QueuePort (F8); +36 endpoints de
+    # diagnostico/auditoria + user_id en chat/tareas (F9, ADR-0007)
+    "core/api.py":                                                      1532,
     # orchestrator subio 1215->1223 (2026-07-14): hook del sandbox Zero-Trust
     "core/orchestrator.py":                                             1223,
     # tools.py subio 1120->1153 (2026-07-14): evaluador AST que reemplaza eval()
@@ -232,6 +233,11 @@ def check_resiliencia() -> list[str]:
             + _correr_suite("tests.resilience.test_queue_service", "RESILIENCIA"))
 
 
+def check_auditoria() -> list[str]:
+    """Fase 9: la traza forense de cada interacción IA debe seguir intacta."""
+    return _correr_suite("tests.audit.test_audit_trail", "AUDITORIA")
+
+
 def check_telemetria_industrial() -> list[str]:
     """Fases 5/6: toda la suite industrial (puente, MQTT, Modbus, OPC-UA, cola)."""
     proc = subprocess.run(
@@ -274,6 +280,7 @@ def main() -> int:
     errores += check_telemetria_industrial()
     errores += check_sandbox()
     errores += check_resiliencia()
+    errores += check_auditoria()
 
     if errores:
         print(f"\nVIOLACIONES ({len(errores)}):")

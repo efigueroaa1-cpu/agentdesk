@@ -78,18 +78,28 @@ class LlmService:
         self._circuitos: dict[str, CircuitBreaker] = {
             proveedor: CircuitBreaker() for proveedor, _ in self._cadena
         }
+        from collections import deque
+        self._latencias: dict[str, deque] = {p: deque(maxlen=20) for p, _ in self._cadena}
+        self._ultimo_error: dict[str, str] = {}
 
     def estado_circuitos(self) -> dict:
-        """Diagnóstico: qué proveedores están activos/abiertos ahora mismo."""
+        """Diagnóstico para el Módulo Diagnóstico: estado OPEN/CLOSED,
+        fallos, latencias recientes y último error por proveedor."""
         ahora = time.monotonic()
-        return {
-            p: {
+        estado = {}
+        for p, cb in self._circuitos.items():
+            lats = list(self._latencias.get(p, []))
+            estado[p] = {
+                "estado": "CLOSED" if cb.disponible() else "OPEN",
                 "activo": cb.disponible(),
                 "fallos_consecutivos": cb.fallos_consecutivos,
                 "reabre_en_s": max(0, round(cb.abierto_hasta - ahora, 1)),
+                "latencia_prom_s": round(sum(lats) / len(lats), 2) if lats else None,
+                "latencia_ultima_s": round(lats[-1], 2) if lats else None,
+                "muestras": len(lats),
+                "ultimo_error": self._ultimo_error.get(p, ""),
             }
-            for p, cb in self._circuitos.items()
-        }
+        return estado
 
     async def generar(self, prompt: str, temperatura: float = 0.4,
                       prioridad: int = 2) -> dict:
@@ -113,6 +123,8 @@ class LlmService:
                     timeout=self._latencia_max_s,
                 )
                 cb.registrar_exito()
+                self._latencias[proveedor].append(time.monotonic() - t0)
+                self._ultimo_error.pop(proveedor, None)
                 if intentos:
                     logger.warning(
                         "LLM_FALLBACK: respondio '%s' tras saltar %s",
@@ -127,12 +139,14 @@ class LlmService:
                 }
             except asyncio.TimeoutError:
                 cb.registrar_fallo()
+                self._ultimo_error[proveedor] = f"latencia>{self._latencia_max_s:.0f}s"
                 intentos.append(f"{proveedor}:latencia>{self._latencia_max_s:.0f}s")
                 logger.warning("CIRCUIT_BREAKER: '%s' excedio latencia (%.0fs) — "
                                "fallos=%d", proveedor, self._latencia_max_s,
                                cb.fallos_consecutivos)
             except Exception as exc:
                 cb.registrar_fallo()
+                self._ultimo_error[proveedor] = f"{type(exc).__name__}: {str(exc)[:120]}"
                 intentos.append(f"{proveedor}:{type(exc).__name__}")
                 logger.warning("CIRCUIT_BREAKER: '%s' fallo (%s) — fallos=%d "
                                "dur=%.1fs", proveedor, exc,
