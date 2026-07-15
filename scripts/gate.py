@@ -54,7 +54,9 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # diagnostico/auditoria + user_id en chat/tareas (F9, ADR-0007)
     "core/api.py":                                                      1532,
     # orchestrator subio 1215->1223 (2026-07-14): hook del sandbox Zero-Trust
-    "core/orchestrator.py":                                             1223,
+    # subio 1223->1242 (2026-07-15, ADR-0009): self.harnesses + inyeccion del
+    # contexto de HATs (_contexto_harnesses) en las 4 rutas de chat
+    "core/orchestrator.py":                                             1242,
     # tools.py subio 1120->1153 (2026-07-14): evaluador AST que reemplaza eval()
     "core/tools.py":                                                    1153,
     # web_monitor.py subio 593->595 (2026-07-14): validacion de esquema http(s)
@@ -227,6 +229,25 @@ def check_tests_adaptadores(archivos: list[str]) -> list[str]:
     return errores
 
 
+def check_harnesses() -> list[str]:
+    """
+    ADR-0009: cada HAT registrado en harness_service.py debe tener su suite
+    de pruebas espejo en tests/harnesses/test_<nombre>_harness.py.
+    """
+    ruta = "core/services/harness_service.py"
+    contenido = "\n".join(leer(ruta))
+    if "_REGISTRO" not in contenido:
+        return []
+    bloque  = contenido.split("_REGISTRO", 1)[-1].split("}", 1)[0]
+    nombres = re.findall(r'"(\w+)"\s*:\s*\w+', bloque)
+    errores = []
+    for nombre in nombres:
+        esperado = f"tests/harnesses/test_{nombre}_harness.py"
+        if not (RAIZ / esperado).is_file():
+            errores.append(f"  [HAT-TEST] harness '{nombre}' sin su suite de pruebas: falta {esperado}")
+    return errores
+
+
 def check_bandit() -> list[str]:
     """Análisis estático de vulnerabilidades (severidad media/alta)."""
     proc = subprocess.run(
@@ -265,6 +286,11 @@ def check_auditoria() -> list[str]:
 def check_enterprise() -> list[str]:
     """Fase 10: refresh tokens rotativos y chequeo de arranque seguro."""
     return _correr_suite("tests.enterprise.test_refresh_tokens", "ENTERPRISE")
+
+
+def check_hats() -> list[str]:
+    """Fase 11: HATs (ContextHarness) — memoria semántica best-effort."""
+    return _correr_suite("tests.harnesses.test_memoria_harness", "HAT")
 
 
 def check_telemetria_industrial() -> list[str]:
@@ -312,6 +338,8 @@ def main() -> int:
     errores += check_resiliencia()
     errores += check_auditoria()
     errores += check_enterprise()
+    errores += check_harnesses()
+    errores += check_hats()
 
     if errores:
         print(f"\nVIOLACIONES ({len(errores)}):")

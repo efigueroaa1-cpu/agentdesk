@@ -202,6 +202,43 @@ def calcular_embeddings(agentes: list[dict], historial_por_agente: dict | None =
     return puntos
 
 
+def recuperar_contexto_similar(query: str, candidatos: list[str], top_k: int = 3) -> list[tuple[int, float]]:
+    """
+    Rankea `candidatos` por similitud coseno TF-IDF contra `query` (ADR-0009:
+    RAG ligero de memoria semántica). Reutiliza el TF-IDF puro en Python de
+    este módulo — sin sklearn, compatible con el bundle de PyInstaller.
+
+    Retorna [(indice_en_candidatos, similitud), ...] ordenado descendente,
+    filtrado a solo lo relevante. Lista vacía si no hay señal (query/
+    candidatos vacíos o sin vocabulario en común).
+
+    Con corpus pequeños el TF-IDF puro reparte algo de peso incluso a
+    candidatos sin relación temática (palabras funcionales compartidas) —
+    se descartan los que quedan muy por debajo del mejor match (<20% de su
+    similitud) para no inyectar ruido no relacionado.
+    """
+    if not query or not candidatos:
+        return []
+    try:
+        matriz = _tfidf_python([query] + list(candidatos))
+    except Exception as exc:
+        logger.warning("recuperar_contexto_similar: TF-IDF falló (%s)", exc)
+        return []
+
+    fila_query = matriz[0]
+    # Filas ya normalizadas L2 por _tfidf_python -> producto punto = coseno.
+    similitudes = [
+        (i, sum(a * b for a, b in zip(fila_query, fila)))
+        for i, fila in enumerate(matriz[1:])
+    ]
+    similitudes = [(i, s) for i, s in similitudes if s > 0]
+    similitudes.sort(key=lambda t: t[1], reverse=True)
+    if similitudes:
+        umbral = similitudes[0][1] * 0.2
+        similitudes = [(i, s) for i, s in similitudes if s >= umbral]
+    return similitudes[:max(1, top_k)]
+
+
 def _posiciones_fallback(agentes: list[dict]) -> list[dict]:
     """Posiciones distribuidas en círculo cuando TF-IDF no es posible."""
     import random
