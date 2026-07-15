@@ -138,6 +138,24 @@ async def auth_login(payload: LoginRequest) -> dict:
     return result
 
 
+class RefreshRequest(BaseModel):
+    refresh_token: str
+
+
+@router.post("/auth/refresh")
+async def auth_refresh(payload: RefreshRequest) -> dict:
+    """
+    Canjea un refresh token rotativo por un nuevo par access+refresh
+    (ADR-0008). El access expira en 30 min; la sesión se mantiene por esta
+    vía sin re-login. Token inválido/reusado → 401.
+    """
+    from core.auth import refrescar
+    resultado = refrescar(payload.refresh_token)
+    if resultado is None:
+        raise HTTPException(status_code=401, detail="Refresh token inválido o expirado.")
+    return resultado
+
+
 @router.post("/auth/cambiar-password")
 async def auth_cambiar_password(payload: CambiarPasswordRequest) -> dict:
     """Cambia la contraseña de un usuario (requiere token de admin)."""

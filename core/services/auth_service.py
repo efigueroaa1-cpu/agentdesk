@@ -30,7 +30,15 @@ from core.ports.auth_port import UserRepositoryPort
 logger = logging.getLogger(__name__)
 
 JWT_ALGORITHM  = "HS256"
-TOKEN_EXPIRE_H = 8
+# ADR-0008: access token corto (reduce la ventana de ataque); la sesión se
+# mantiene con refresh tokens rotativos persistidos (tabla refresh_tokens).
+ACCESS_EXPIRE_MIN   = 30
+REFRESH_EXPIRE_DIAS = 7
+TOKEN_EXPIRE_H      = ACCESS_EXPIRE_MIN / 60   # alias histórico (fachada)
+
+# Secretos débiles/conocidos que delatan una instalación manipulada
+_SECRETOS_DEBILES = {"secret", "changeme", "default", "agentdesk", "123456",
+                     "password", "admin", "jwt_secret", "dev"}
 
 
 def _get_secret() -> str:
@@ -137,7 +145,7 @@ class AuthService:
         try:
             import jwt
             ahora   = datetime.now(timezone.utc)
-            expira  = ahora + timedelta(hours=TOKEN_EXPIRE_H)
+            expira  = ahora + timedelta(minutes=ACCESS_EXPIRE_MIN)
             payload = {
                 "sub":  username,
                 "role": role,
@@ -149,7 +157,7 @@ class AuthService:
                 "token":      token,
                 "username":   username,
                 "role":       role,
-                "expires_in": TOKEN_EXPIRE_H * 3600,
+                "expires_in": ACCESS_EXPIRE_MIN * 60,
             }
         except ImportError:
             # Fallback HMAC si PyJWT no está disponible
@@ -158,7 +166,7 @@ class AuthService:
             sig     = hmac.new(_get_secret().encode(), payload, hashlib.sha256).hexdigest()
             token   = base64.urlsafe_b64encode(payload).decode() + "." + sig
             return {"token": token, "username": username, "role": role,
-                    "expires_in": TOKEN_EXPIRE_H * 3600}
+                    "expires_in": ACCESS_EXPIRE_MIN * 60}
 
     def verificar_token(self, token: str) -> dict | None:
         """Decodifica y verifica el JWT. Devuelve el payload o None si es inválido."""
@@ -200,7 +208,102 @@ class AuthService:
         if not _check_password(password, u.password_hash):
             return None
         self._repo.actualizar_ultimo_acceso(u.username)
-        return self.crear_token(u.username, u.rol)
+        resultado = self.crear_token(u.username, u.rol)
+        resultado["refresh_token"] = self._emitir_refresh(u.username)
+        return resultado
+
+    # ── Refresh tokens rotativos (ADR-0008) ───────────────────────────────
+
+    @staticmethod
+    def _hash_refresh(token: str) -> str:
+        import hashlib
+        return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+    def _emitir_refresh(self, username: str) -> str:
+        import secrets
+        from datetime import timedelta as _td
+        from core.repositories import refresh_token_repository as rt
+        from core.timeutil import utcnow as _now
+        token = secrets.token_urlsafe(48)
+        rt.guardar(username, self._hash_refresh(token),
+                   _now() + _td(days=REFRESH_EXPIRE_DIAS))
+        return token
+
+    def refrescar(self, refresh_token: str) -> dict | None:
+        """
+        Canjea un refresh token por un nuevo par access+refresh (rotación:
+        el usado queda revocado). El reuso de un token ya revocado delata
+        robo y revoca TODA la familia del usuario. Retorna None si inválido.
+        """
+        from core.repositories import refresh_token_repository as rt
+        from core.timeutil import utcnow as _now
+
+        if not refresh_token:
+            return None
+        h    = self._hash_refresh(refresh_token)
+        fila = rt.obtener(h)
+        if fila is None:
+            return None
+        if fila["revocado"]:
+            n = rt.revocar_de_usuario(fila["username"])
+            logger.warning(
+                "AUDITORIA_SEGURIDAD: reuso de refresh token revocado — "
+                "user_id=%s; %d tokens de la familia revocados (posible robo).",
+                fila["username"], n,
+            )
+            return None
+        if fila["expira"] < _now():
+            return None
+
+        rt.revocar(h)   # rotación: un solo uso
+        u = self._repo.obtener_por_username(fila["username"], solo_activos=True)
+        if not u:
+            return None
+        resultado = self.crear_token(u.username, u.rol)
+        resultado["refresh_token"] = self._emitir_refresh(u.username)
+        return resultado
+
+    # ── Chequeo de salud de arranque (Fail-Hard, ADR-0008) ────────────────
+
+    def diagnostico_arranque(self, jwt_secret_path=None) -> dict:
+        """
+        Salud de credenciales al arrancar:
+          criticos → negarse a arrancar (secreto JWT débil = manipulación).
+          modo_configuracion → arrancar degradado (instalación sin credenciales
+          posibles: sin usuarios en DB y sin MASTER_PASSWORD_HASH en .env).
+        """
+        criticos: list[str] = []
+        avisos:   list[str] = []
+
+        if jwt_secret_path is None:
+            from core.path_manager import data_path
+            jwt_secret_path = data_path("") / "jwt_secret.key"
+        try:
+            if jwt_secret_path.exists():
+                secreto = jwt_secret_path.read_text(encoding="utf-8").strip()
+                if len(secreto) < 32 or secreto.lower() in _SECRETOS_DEBILES:
+                    criticos.append(
+                        "JWT_SECRET debil o por defecto en jwt_secret.key: "
+                        "elimina el archivo para regenerar uno aleatorio seguro."
+                    )
+        except OSError as e:
+            avisos.append(f"No se pudo leer jwt_secret.key: {e}")
+
+        try:
+            sin_usuarios = self._repo.contar() == 0
+        except Exception as e:
+            sin_usuarios = False
+            avisos.append(f"No se pudo consultar la tabla de usuarios: {e}")
+        sin_master = not os.environ.get("MASTER_PASSWORD_HASH", "").strip()
+        modo_config = sin_usuarios and sin_master
+        if modo_config:
+            avisos.append(
+                "Sin usuarios en la base y sin MASTER_PASSWORD_HASH en .env: "
+                "nadie puede iniciar sesion. Define MASTER_PASSWORD_HASH y reinicia."
+            )
+
+        return {"criticos": criticos, "avisos": avisos,
+                "modo_configuracion": modo_config}
 
     def cambiar_password(self, username: str, nueva_password: str) -> bool:
         """Cambia la contraseña de un usuario con bcrypt. Sin texto plano."""
