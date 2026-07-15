@@ -212,24 +212,36 @@ class OrchestratorService:
                                "agente_nombre": agente.nombre})
         _t0 = time.monotonic()
         herramientas_usadas: list[str] = []
-        try:
-            respuesta, herramientas_usadas = await asyncio.wait_for(
-                agente.chat_con_herramientas(
-                    mensaje,
-                    sesion_id=sesion_id,
-                    agente_id_clave=agente_key,
-                    archivo_id=archivo_id,
-                ),
-                timeout=90.0,
-            )
-            if herramientas_usadas:
-                await self._broadcast({
-                    "tipo":         "herramientas_usadas",
-                    "agente_id":    agente_key,
-                    "herramientas": herramientas_usadas,
-                })
-        except asyncio.TimeoutError:
-            respuesta = "⏰ El agente tardó más de 90 segundos. Intenta de nuevo."
+        respuesta = None
+        # ADR-0008: reintentos con backoff exponencial (2s, 4s) para absorber
+        # latencias transitorias de red o de proveedores LLM pesados.
+        MAX_INTENTOS = 3
+        for intento in range(MAX_INTENTOS):
+            try:
+                respuesta, herramientas_usadas = await asyncio.wait_for(
+                    agente.chat_con_herramientas(
+                        mensaje,
+                        sesion_id=sesion_id,
+                        agente_id_clave=agente_key,
+                        archivo_id=archivo_id,
+                    ),
+                    timeout=90.0,
+                )
+                if herramientas_usadas:
+                    await self._broadcast({
+                        "tipo":         "herramientas_usadas",
+                        "agente_id":    agente_key,
+                        "herramientas": herramientas_usadas,
+                    })
+                break
+            except asyncio.TimeoutError:
+                if intento < MAX_INTENTOS - 1:
+                    espera = 2.0 * (2 ** intento)
+                    logger.warning("chat '%s': timeout de paso (90s), reintento %d/%d en %.0fs",
+                                   agente.nombre, intento + 1, MAX_INTENTOS - 1, espera)
+                    await asyncio.sleep(espera)
+                else:
+                    respuesta = "⏰ El agente tardó más de 90 segundos (3 intentos). Intenta de nuevo."
         await self._broadcast({"tipo": "chat_respuesta",
                                "agente_id": agente_key,
                                "agente_nombre": agente.nombre})
@@ -269,7 +281,9 @@ class OrchestratorService:
                "agente_area": agente.area, "agente_id": agente_key}
 
         _t0 = time.monotonic()
-        PASO_TIMEOUT_S = 45.0
+        # ADR-0008: 90 s por paso — absorbe latencias de proveedores pesados
+        # en tareas industriales complejas sin cortar conversaciones vivas.
+        PASO_TIMEOUT_S = 90.0
         try:
             aiter = agente.chat_con_herramientas_stream(
                 mensaje,

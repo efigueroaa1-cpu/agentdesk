@@ -29,6 +29,7 @@ METODOS_ESCRITURA = {"POST", "PUT", "DELETE", "PATCH"}
 RUTAS_PUBLICAS_AUTORIZADAS: frozenset[tuple[str, str]] = frozenset({
     # Autenticación (el login ES la puerta; el CRUD exige rol admin en handler)
     ("POST", "/auth/login"),
+    ("POST", "/auth/refresh"),   # canje de refresh token: el token ES la credencial
     ("POST", "/auth/usuarios"),
     ("PUT",  "/auth/usuarios/{username}/rol"),
     ("PUT",  "/auth/usuarios/{username}/activo"),

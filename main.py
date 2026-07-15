@@ -293,6 +293,25 @@ if __name__ == "__main__":
             sys.exit(78)   # EX_CONFIG — desactivado por configuración
         # _estado_ks is None → Gist inalcanzable → fail-open (arrancar igual)
 
+        # ── Chequeo de salud inicial (Fail-Hard, ADR-0008) ────────────────────
+        # Secreto JWT débil/por defecto = instalación manipulada → NO arrancar.
+        # Sin credenciales posibles (ni usuarios ni MASTER_PASSWORD_HASH) →
+        # arrancar degradado a modo configuración con aviso claro.
+        from core.auth import diagnostico_arranque
+        _salud = diagnostico_arranque()
+        if _salud["criticos"]:
+            print("=" * 72, file=sys.stderr)
+            print("[SEGURIDAD] AgentDesk se niega a arrancar:", file=sys.stderr)
+            for _err in _salud["criticos"]:
+                print(f"  - {_err}", file=sys.stderr)
+            print("Corrige la configuracion y vuelve a iniciar.", file=sys.stderr)
+            print("=" * 72, file=sys.stderr)
+            sys.exit(78)   # EX_CONFIG
+        if _salud["modo_configuracion"]:
+            print("[SEGURIDAD] Arranque en MODO CONFIGURACION:", file=sys.stderr)
+            for _av in _salud["avisos"]:
+                print(f"  - {_av}", file=sys.stderr)
+
         import uvicorn
         from core.api import app as _api_app
 

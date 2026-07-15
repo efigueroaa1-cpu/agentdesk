@@ -50,6 +50,9 @@ export function AuthProvider({ children }) {
       const data = await r.json();
       if (!data.token) return false;
       sessionStorage.setItem("agentdesk-jwt-token", data.token);
+      if (data.refresh_token) {
+        sessionStorage.setItem("agentdesk-refresh-token", data.refresh_token);
+      }
       sessionStorage.setItem("agentdesk-user", JSON.stringify(data));
       setUsuario(data);
       setEstaAutenticado(true);
@@ -63,6 +66,7 @@ export function AuthProvider({ children }) {
     setUsuario(null);
     setEstaAutenticado(false);
     sessionStorage.removeItem("agentdesk-jwt-token");
+    sessionStorage.removeItem("agentdesk-refresh-token");
     sessionStorage.removeItem("agentdesk-user");
   };
 

@@ -269,6 +269,21 @@ class AnalisisFinanciero(Base):
         }
 
 
+class RefreshToken(Base):
+    """
+    Refresh token rotativo (ADR-0008). Se almacena SOLO el hash SHA-256 del
+    token (nunca el valor); cada uso lo revoca y emite uno nuevo (rotación).
+    El reuso de un token revocado delata robo y revoca toda la familia.
+    """
+    __tablename__ = "refresh_tokens"
+    id          = Column(Integer, primary_key=True, autoincrement=True)
+    token_hash  = Column(String(64), nullable=False, unique=True, index=True)
+    username    = Column(String(64), nullable=False, index=True)
+    expira      = Column(DateTime, nullable=False)
+    revocado    = Column(Boolean, default=False)
+    ts_creacion = Column(DateTime, default=datetime.utcnow)
+
+
 class AuditoriaIA(Base):
     """
     Traza forense de CADA interacción de agente (ADR-0007): prompt, contexto,

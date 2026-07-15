@@ -101,7 +101,8 @@ def inventario() -> list[str]:
 
 def leer(rel: str) -> list[str]:
     try:
-        return (RAIZ / rel).read_text(encoding="utf-8", errors="replace").splitlines()
+        # utf-8-sig: descarta el BOM que dejan PowerShell/editores Windows
+        return (RAIZ / rel).read_text(encoding="utf-8-sig", errors="replace").splitlines()
     except OSError:
         return []
 
@@ -166,6 +167,29 @@ def check_ejecucion_peligrosa(archivos: list[str]) -> list[str]:
             if RE_EJECUCION_PELIGROSA.search(sin_comentario):
                 errores.append(f"  [EXEC]    {rel}:{n}: {linea.strip()[:80]}  "
                                f"<- eval()/shell=True prohibidos (usar sandbox_service)")
+    return errores
+
+
+# Credenciales por defecto (Fase 10, ADR-0008): un secreto/clave hardcodeado
+# con un valor conocido delata configuracion insegura. Case-insensitive.
+RE_CRED_DEFECTO = re.compile(
+    r"(?i)\b\w*(password|passwd|secret|api_key|apikey|token)\w*\s*[:=]\s*"
+    r"[\"'](changeme|password|admin|admin123|secret|123456|default|letmein|qwerty|test)[\"']"
+)
+
+
+def check_credenciales_defecto(archivos: list[str]) -> list[str]:
+    errores = []
+    for rel in archivos:
+        if Path(rel).suffix not in {".py", ".js", ".jsx", ".json", ".toml",
+                                    ".yml", ".yaml", ".ps1", ".env"}:
+            continue
+        if rel in EXCLUIR_TAGS or rel == "scripts/gate.py":
+            continue
+        for n, linea in enumerate(leer(rel), 1):
+            if RE_CRED_DEFECTO.search(linea):
+                errores.append(f"  [CRED]    {rel}:{n}: {linea.strip()[:80]}  "
+                               f"<- credencial por defecto prohibida (ADR-0008)")
     return errores
 
 
@@ -238,6 +262,11 @@ def check_auditoria() -> list[str]:
     return _correr_suite("tests.audit.test_audit_trail", "AUDITORIA")
 
 
+def check_enterprise() -> list[str]:
+    """Fase 10: refresh tokens rotativos y chequeo de arranque seguro."""
+    return _correr_suite("tests.enterprise.test_refresh_tokens", "ENTERPRISE")
+
+
 def check_telemetria_industrial() -> list[str]:
     """Fases 5/6: toda la suite industrial (puente, MQTT, Modbus, OPC-UA, cola)."""
     proc = subprocess.run(
@@ -273,6 +302,7 @@ def main() -> int:
     errores += check_tamano(archivos)
     errores += check_imports(archivos)
     errores += check_ejecucion_peligrosa(archivos)
+    errores += check_credenciales_defecto(archivos)
     errores += check_pesado_sincrono()
     errores += check_tests_adaptadores(archivos)
     errores += check_bandit()
@@ -281,6 +311,7 @@ def main() -> int:
     errores += check_sandbox()
     errores += check_resiliencia()
     errores += check_auditoria()
+    errores += check_enterprise()
 
     if errores:
         print(f"\nVIOLACIONES ({len(errores)}):")

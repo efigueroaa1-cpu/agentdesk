@@ -39,6 +39,14 @@ def login(username: str, password: str) -> dict | None:
     return _svc.login(username, password)
 
 
+def refrescar(refresh_token: str) -> dict | None:
+    return _svc.refrescar(refresh_token)
+
+
+def diagnostico_arranque(jwt_secret_path=None) -> dict:
+    return _svc.diagnostico_arranque(jwt_secret_path)
+
+
 def cambiar_password(username: str, nueva_password: str) -> bool:
     return _svc.cambiar_password(username, nueva_password)
 
