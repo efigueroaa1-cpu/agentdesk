@@ -42,7 +42,15 @@ _SECRETOS_DEBILES = {"secret", "changeme", "default", "agentdesk", "123456",
 
 
 def _get_secret() -> str:
-    """Clave JWT aleatoria persistida en jwt_secret.key (se genera una vez)."""
+    """
+    Clave JWT: AGENTDESK_JWT_SECRET (env var) tiene prioridad absoluta sobre
+    jwt_secret.key. Sin la env var, se usa/genera el archivo persistido como
+    hasta ahora (secreto aleatorio de 64 hex chars, escrito una sola vez).
+    """
+    _override = os.environ.get("AGENTDESK_JWT_SECRET", "").strip()
+    if _override:
+        return _override
+
     from core.path_manager import data_path
     secret_path = data_path("") / "jwt_secret.key"
     if secret_path.exists():
@@ -271,23 +279,35 @@ class AuthService:
           criticos → negarse a arrancar (secreto JWT débil = manipulación).
           modo_configuracion → arrancar degradado (instalación sin credenciales
           posibles: sin usuarios en DB y sin MASTER_PASSWORD_HASH en .env).
+
+        AGENTDESK_JWT_SECRET (env var) tiene prioridad absoluta sobre
+        jwt_secret.key: si está presente, se valida ESE valor y el archivo
+        físico ni se lee (mismas reglas de fuerza — longitud/lista de débiles).
         """
         criticos: list[str] = []
         avisos:   list[str] = []
 
-        if jwt_secret_path is None:
-            from core.path_manager import data_path
-            jwt_secret_path = data_path("") / "jwt_secret.key"
-        try:
-            if jwt_secret_path.exists():
-                secreto = jwt_secret_path.read_text(encoding="utf-8").strip()
-                if len(secreto) < 32 or secreto.lower() in _SECRETOS_DEBILES:
-                    criticos.append(
-                        "JWT_SECRET debil o por defecto en jwt_secret.key: "
-                        "elimina el archivo para regenerar uno aleatorio seguro."
-                    )
-        except OSError as e:
-            avisos.append(f"No se pudo leer jwt_secret.key: {e}")
+        _override = os.environ.get("AGENTDESK_JWT_SECRET", "").strip()
+        if _override:
+            if len(_override) < 32 or _override.lower() in _SECRETOS_DEBILES:
+                criticos.append(
+                    "JWT_SECRET debil o por defecto en AGENTDESK_JWT_SECRET: "
+                    "usa un valor aleatorio de al menos 32 caracteres."
+                )
+        else:
+            if jwt_secret_path is None:
+                from core.path_manager import data_path
+                jwt_secret_path = data_path("") / "jwt_secret.key"
+            try:
+                if jwt_secret_path.exists():
+                    secreto = jwt_secret_path.read_text(encoding="utf-8").strip()
+                    if len(secreto) < 32 or secreto.lower() in _SECRETOS_DEBILES:
+                        criticos.append(
+                            "JWT_SECRET debil o por defecto en jwt_secret.key: "
+                            "elimina el archivo para regenerar uno aleatorio seguro."
+                        )
+            except OSError as e:
+                avisos.append(f"No se pudo leer jwt_secret.key: {e}")
 
         try:
             sin_usuarios = self._repo.contar() == 0

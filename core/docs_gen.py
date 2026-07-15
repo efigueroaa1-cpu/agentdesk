@@ -413,7 +413,9 @@ def generar_manual(empresa: str = "Su Empresa") -> bytes:
         ("MASTER_PASSWORD_HASH", "Hash bcrypt del primer administrador. Obligatorio para el primer arranque."),
         ("GEMINI_API_KEY",       "Clave de la API de Google Gemini. Requerida para ejecutar agentes IA."),
         ("KILL_SWITCH_GIST_URL", "URL raw del Gist de control remoto. Opcional; sin él el switch es solo local."),
-        ("JWT_SECRET",           "Clave JWT personalizada. Opcional; si no existe se genera automáticamente."),
+        ("AGENTDESK_JWT_SECRET", "Clave JWT personalizada (min. 32 caracteres). Opcional; tiene prioridad "
+                                  "absoluta sobre jwt_secret.key. Sin ella, el sistema genera y persiste un "
+                                  "secreto aleatorio en jwt_secret.key la primera vez."),
     ]
     for i, (var, desc) in enumerate(env_vars):
         _tabla_fila(pdf, [var, desc], anchos5, i % 2 == 0)

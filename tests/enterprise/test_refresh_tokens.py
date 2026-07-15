@@ -89,6 +89,32 @@ class TestRefreshTokens(unittest.TestCase):
         salud2 = self.svc.diagnostico_arranque(jwt_secret_path=fuerte)
         self.assertEqual(salud2["criticos"], [])
 
+    def test_06b_agentdesk_jwt_secret_tiene_prioridad_absoluta(self):
+        """AGENTDESK_JWT_SECRET pisa jwt_secret.key: ni se lee el archivo."""
+        original = os.environ.pop("AGENTDESK_JWT_SECRET", None)
+        archivo_ignorado = Path(tempfile.mkdtemp()) / "jwt_secret.key"
+        archivo_ignorado.write_text("c" * 64, encoding="utf-8")
+        try:
+            os.environ["AGENTDESK_JWT_SECRET"] = "d" * 40
+            self.assertEqual(_get_secret(), "d" * 40)
+
+            salud_fuerte = self.svc.diagnostico_arranque(jwt_secret_path=archivo_ignorado)
+            self.assertEqual(salud_fuerte["criticos"], [])
+
+            # token emitido y verificado íntegramente bajo el override, sin
+            # tocar el secreto del archivo (que sigue siendo "cccc...").
+            tok = self.svc.crear_token("op.planta", "supervisor")
+            self.assertIsNotNone(self.svc.verificar_token(tok["token"]))
+
+            os.environ["AGENTDESK_JWT_SECRET"] = "corto"
+            salud_debil = self.svc.diagnostico_arranque(jwt_secret_path=archivo_ignorado)
+            self.assertTrue(any("AGENTDESK_JWT_SECRET" in c for c in salud_debil["criticos"]))
+        finally:
+            if original is not None:
+                os.environ["AGENTDESK_JWT_SECRET"] = original
+            else:
+                os.environ.pop("AGENTDESK_JWT_SECRET", None)
+
     def test_06_arranque_sin_credenciales_degrada_a_configuracion(self):
         class _RepoVacio:
             def contar(self):
