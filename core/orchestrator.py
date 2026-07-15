@@ -54,6 +54,8 @@ class AgentBase:
         self.area               = config.get("area",               "General").strip().title()
         # Encadenamiento: ID del siguiente agente al que pasar el resultado
         self.siguiente_agente_id = config.get("siguiente_agente_id", None)
+        # HATs (ADR-0009): capacidades componibles atachadas por config.
+        self.harnesses = list(config.get("harnesses", []))
 
     def reload_config(self, config: dict) -> bool:
         """
@@ -130,6 +132,21 @@ class AgentBase:
         )
         return True
 
+    async def _contexto_harnesses(self, mensaje: str, agente_id_clave: str) -> str:
+        """Contexto extra best-effort de los HATs configurados (ADR-0009)."""
+        if not self.harnesses:
+            return ""
+        try:
+            from core.services.harness_service import harness_service
+            extra = await harness_service.aplicar_pre(
+                self.harnesses, agente_id_clave or self.nombre, mensaje,
+            )
+            return f"\n\n{extra}\n" if extra else ""
+        except Exception as exc:
+            logger.warning("HATs: contexto no aplicado para '%s' (%s)",
+                           self.nombre, exc, extra={"agente": self.nombre})
+            return ""
+
     async def chat_libre(
         self,
         mensaje: str,
@@ -159,13 +176,14 @@ class AgentBase:
         archivo_ctx = (f"\n\nContenido del archivo adjunto:\n{contexto_archivo[:6000]}\n"
                        if contexto_archivo else "")
         memoria_ctx = f"\n\n{historial_ctx}\n" if historial_ctx else ""
+        harness_ctx = await self._contexto_harnesses(mensaje, aid)
 
         prompt = (
             f"{rol}"
             f"Responde siempre en {self.idioma}. "
             f"Eres {self.nombre}, agente de área {self.area}. "
             f"Responde de forma clara, directa y coherente con el historial."
-            f"{memoria_ctx}{archivo_ctx}\n\n"
+            f"{memoria_ctx}{harness_ctx}{archivo_ctx}\n\n"
             f"Usuario: {mensaje}"
         )
 
@@ -228,6 +246,7 @@ class AgentBase:
         historial_ctx = _mem.get_contexto(aid, sesion_id, n_mensajes=6)
         rol           = f"{self.prompt_base}\n\n" if self.prompt_base else ""
         memoria_ctx   = f"\n\n{historial_ctx}\n" if historial_ctx else ""
+        harness_ctx   = await self._contexto_harnesses(mensaje, aid)
 
         archivo_hint = (
             f"\nEl usuario ha adjuntado el archivo con ID '{archivo_id}'. "
@@ -246,7 +265,7 @@ class AgentBase:
             f"4. USA calcular() para TODA operación matemática, nunca calcules mentalmente.\n"
             f"5. Si no tienes un dato, di 'No tengo ese dato, ¿puedes proporcionarlo?' en lugar de inventarlo.\n"
             f"{archivo_hint}"
-            f"{memoria_ctx}"
+            f"{memoria_ctx}{harness_ctx}"
         )
 
         herramientas_usadas = []
@@ -441,6 +460,7 @@ class AgentBase:
         historial_ctx = _mem.get_contexto(aid, sesion_id, n_mensajes=6)
         rol           = f"{self.prompt_base}\n\n" if self.prompt_base else ""
         memoria_ctx   = f"\n\n{historial_ctx}\n" if historial_ctx else ""
+        harness_ctx   = await self._contexto_harnesses(mensaje, aid)
 
         archivo_hint = (
             f"\nEl usuario ha adjuntado el archivo con ID '{archivo_id}'. "
@@ -458,7 +478,7 @@ class AgentBase:
             f"3. Para archivos usa leer_archivo() o listar_archivos().\n"
             f"4. Para cálculos usa calcular().\n"
             f"{archivo_hint}"
-            f"{memoria_ctx}"
+            f"{memoria_ctx}{harness_ctx}"
         )
 
         herramientas_usadas: list[str] = []
@@ -662,13 +682,14 @@ class AgentBase:
         archivo_ctx   = (f"\n\nContenido del archivo adjunto:\n{contexto_archivo[:6000]}\n"
                          if contexto_archivo else "")
         memoria_ctx   = f"\n\n{historial_ctx}\n" if historial_ctx else ""
+        harness_ctx   = await self._contexto_harnesses(mensaje, aid)
 
         prompt = (
             f"{rol}"
             f"Responde siempre en {self.idioma}. "
             f"Eres {self.nombre}, agente de área {self.area}. "
             f"Responde de forma clara, directa y coherente con el historial."
-            f"{memoria_ctx}{archivo_ctx}\n\n"
+            f"{memoria_ctx}{harness_ctx}{archivo_ctx}\n\n"
             f"Usuario: {mensaje}"
         )
 
