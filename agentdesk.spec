@@ -76,6 +76,11 @@ a = Analysis(
         "sqlalchemy.dialects.sqlite",
         "sqlalchemy.orm",
         "sqlalchemy.pool",
+        # PostgreSQL (ADR-0005, modo servidor): SQLAlchemy carga el driver por
+        # nombre de dialecto en tiempo de ejecucion (postgresql+psycopg2://),
+        # invisible al analisis estatico de PyInstaller — hiddenimport obligatorio.
+        "sqlalchemy.dialects.postgresql",
+        "psycopg2",
         "beautifulsoup4",
         "bs4",
         # PDF (fpdf2 - no PIL dependency)
