@@ -149,13 +149,30 @@ async def startup() -> None:
     # Verificación inmediata (no espera el primer intervalo de 5 min)
     await kill_switch.verificar_gist()
 
+    # Alertas activas de SLOs industriales (Fase 20, ADR-0018)
+    try:
+        from core.services.alert_service import iniciar_monitor as _iniciar_monitor_alertas
+        _state._tarea_alertas = asyncio.create_task(_iniciar_monitor_alertas())
+        logger.info("Alert service (SLOs) iniciado")
+    except Exception as exc:
+        logger.error("Alert service init error: %s", exc)
+
+    # Higiene de datos: purga/anonimización periódica por retención (Fase 20, ADR-0018)
+    try:
+        from core.services.audit_service import iniciar_monitor_purga as _iniciar_monitor_purga
+        _state._tarea_purga = asyncio.create_task(_iniciar_monitor_purga())
+        logger.info("Purga de retención de auditoría iniciada")
+    except Exception as exc:
+        logger.error("Purge service init error: %s", exc)
+
     # Auto-inicializar Orquestador si no hay bridge externo
     await _state._auto_iniciar_orquestador()
 
 
 @app.on_event("shutdown")
 async def shutdown() -> None:
-    for tarea in (_state._tarea_monitor, _state._tarea_cmds):
+    for tarea in (_state._tarea_monitor, _state._tarea_cmds,
+                  _state._tarea_alertas, _state._tarea_purga):
         if tarea and not tarea.done():
             tarea.cancel()
             try:
