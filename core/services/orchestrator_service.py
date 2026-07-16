@@ -224,6 +224,7 @@ class OrchestratorService:
                         sesion_id=sesion_id,
                         agente_id_clave=agente_key,
                         archivo_id=archivo_id,
+                        user_id=user_id,
                     ),
                     timeout=90.0,
                 )
@@ -290,6 +291,7 @@ class OrchestratorService:
                 sesion_id=sesion_id,
                 agente_id_clave=agente_key,
                 archivo_id=archivo_id,
+                user_id=user_id,
             ).__aiter__()
 
             while True:
