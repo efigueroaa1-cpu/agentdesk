@@ -52,16 +52,22 @@ LEGACY_OVERSIZE: dict[str, int] = {
     "agentdesk-dashboard/src/components/settings/SecurityPanel.jsx":     898,
     # api.py 2865->1493 (ADR-0003); +3 QueuePort (F8); +36 endpoints de
     # diagnostico/auditoria + user_id en chat/tareas (F9, ADR-0007)
-    "core/api.py":                                                      1532,
+    # subio 1532->1534 (2026-07-15, ADR-0011): set_orquestador() en startup
+    # para la delegacion cognitiva Speak/Listen
+    "core/api.py":                                                      1534,
     # orchestrator subio 1215->1223 (2026-07-14): hook del sandbox Zero-Trust
     # subio 1223->1242 (2026-07-15, ADR-0009): self.harnesses + inyeccion del
     # contexto de HATs (_contexto_harnesses) en las 4 rutas de chat
     # subio 1242->1269 (2026-07-15, ADR-0010): user_id enhebrado en las 4
     # rutas de chat (aislamiento de memoria) + _criticar_respuesta wireado
     # en chat_libre/chat_con_herramientas (CritiqueHarness post-hook)
-    "core/orchestrator.py":                                             1269,
+    # subio 1269->1277 (2026-07-15, ADR-0011): agente_id_clave/user_id
+    # enhebrados en los 4 call sites de ejecutar_herramienta (delegacion)
+    "core/orchestrator.py":                                             1277,
     # tools.py subio 1120->1153 (2026-07-14): evaluador AST que reemplaza eval()
-    "core/tools.py":                                                    1153,
+    # subio 1153->1209 (2026-07-15, ADR-0011): tool consultar_a_otro_agente
+    # + set_orquestador() (delegacion cognitiva Speak/Listen)
+    "core/tools.py":                                                    1209,
     # web_monitor.py subio 593->595 (2026-07-14): validacion de esquema http(s)
     "core/web_monitor.py":                                               595,
     "dashboard.py":                                                     1257,
@@ -251,6 +257,28 @@ def check_harnesses() -> list[str]:
     return errores
 
 
+def check_seguridad_herramientas() -> list[str]:
+    """
+    ADR-0011 [TOOL-SECURITY]: ninguna herramienta expuesta a los agentes
+    (core/tools.py) puede leer os.environ directamente — filtraria API keys
+    y secretos del host al LLM. Si una herramienta necesita ejecutar algo
+    con variables de sistema, debe pasar por sandbox_service.py (entorno
+    minimo controlado / DockerRunner).
+    """
+    errores = []
+    RE_ENVIRON = re.compile(r"\bos\.environ\b")
+    for n, linea in enumerate(leer("core/tools.py"), 1):
+        limpia = linea.strip()
+        if limpia.startswith("#"):
+            continue
+        if RE_ENVIRON.search(linea):
+            errores.append(
+                f"  [TOOL-SECURITY] core/tools.py:{n}: acceso directo a os.environ en "
+                f"una herramienta -> usa sandbox_service (entorno minimo controlado)"
+            )
+    return errores
+
+
 def check_bandit() -> list[str]:
     """Análisis estático de vulnerabilidades (severidad media/alta)."""
     proc = subprocess.run(
@@ -295,6 +323,12 @@ def check_hats() -> list[str]:
     """Fases 11/12: HATs (ContextHarness + CritiqueHarness) — best-effort."""
     return (_correr_suite("tests.harnesses.test_memoria_harness", "HAT")
             + _correr_suite("tests.harnesses.test_autocritica_harness", "HAT"))
+
+
+def check_fase13() -> list[str]:
+    """Fase 13: DockerRunner (opcional, skip sin Docker) + delegacion Speak/Listen."""
+    return (_correr_suite("tests.sandbox.test_docker_runner", "DOCKER")
+            + _correr_suite("tests.collaboration.test_delegation", "DELEGACION"))
 
 
 def check_aislamiento_memoria() -> list[str]:
@@ -365,6 +399,8 @@ def main() -> int:
     errores += check_harnesses()
     errores += check_hats()
     errores += check_aislamiento_memoria()
+    errores += check_seguridad_herramientas()
+    errores += check_fase13()
 
     if errores:
         print(f"\nVIOLACIONES ({len(errores)}):")
