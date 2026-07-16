@@ -17,7 +17,8 @@ from starlette.requests import Request
 from core.timeutil import utcnow
 from core import kill_switch
 import core.api._state as _state
-from core.api.schemas import KillSwitchToggleRequest, KillSwitchURLRequest, UpdateURLRequest
+from core.api.schemas import (KillSwitchToggleRequest, KillSwitchURLRequest,
+                              MapReduceRequest, UpdateURLRequest)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -103,6 +104,39 @@ async def diagnostico_llm() -> dict:
     from core.services.llm_service import llm_service
     return {"circuitos": llm_service.estado_circuitos(),
             "cadena": [p for p, _ in llm_service._cadena]}
+
+
+@router.get("/diagnostico/recursos")
+async def diagnostico_recursos() -> dict:
+    """
+    Circuit Breaker de Concurrencia (Fase 21, ADR-0019): carga actual de
+    CPU/RAM del host y si el sistema esta admitiendo nuevas tareas pesadas.
+    Publico, mismo criterio que /diagnostico/llm (no revela secretos).
+    """
+    from core.services.resource_guard import carga_actual, puede_admitir_tarea
+    carga = carga_actual()
+    return {**carga, "admite_nuevas_tareas": puede_admitir_tarea()}
+
+
+@router.post("/orquestador/mapreduce")
+async def orquestador_mapreduce(payload: MapReduceRequest, req: Request) -> dict:
+    """
+    Orquestacion Paralela Map-Reduce (Fase 21, ADR-0019): un agente Lider
+    despacha la misma tarea a N agentes trabajadores en paralelo (hilos
+    aislados del pool de queue_service) y recibe el resultado consolidado.
+    Requiere rol supervisor o admin -- dispara N llamadas reales a LLM,
+    mismo criterio de costo que /auditoria/*.
+    """
+    from core.auth import tiene_permiso
+    if not tiene_permiso(getattr(req.state, "rol", "viewer"), "supervisor"):
+        raise HTTPException(403, detail="Se requiere rol supervisor o admin.")
+    user_id = getattr(req.state, "user_id", "anonimo")
+    try:
+        return await _state._map_reduce_service.ejecutar(
+            payload.lider_id, payload.trabajadores_ids, payload.prompt, user_id=user_id,
+        )
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.get("/diagnostico/tracing")

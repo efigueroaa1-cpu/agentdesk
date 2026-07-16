@@ -13,6 +13,8 @@ Estructura:
 from __future__ import annotations
 from datetime import datetime
 
+from core.services.resource_guard import costo_recursos
+
 
 # ── Paleta de colores (R, G, B) ───────────────────────────────────────────────
 AZUL_OSC  = (10,  45,  95)
@@ -29,6 +31,7 @@ COLORES_BAR = [
 ]
 
 
+@costo_recursos(cpu="medio", memoria="bajo")
 def generar_pdf(
     reporte:        dict,
     titulo:         str = "Informe de Análisis",

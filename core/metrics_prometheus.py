@@ -55,6 +55,18 @@ if _DISPONIBLE:
         "1 si el circuito del proveedor esta CLOSED (disponible), 0 si OPEN",
         ["proveedor"], registry=REGISTRO,
     )
+    CARGA_HOST_PCT = Gauge(
+        "agentdesk_carga_host_pct",
+        "Carga actual del host (CPU/RAM, %) vista por el Circuit Breaker de "
+        "Concurrencia (Fase 21, ADR-0019)",
+        ["recurso"], registry=REGISTRO,
+    )
+    CIRCUITO_CONCURRENCIA_ABIERTO = Counter(
+        "agentdesk_circuito_concurrencia_abierto_total",
+        "Veces que el Circuit Breaker de Concurrencia rechazo una tarea pesada "
+        "por carga de host excesiva (Fase 21, ADR-0019)",
+        registry=REGISTRO,
+    )
 
 
 def registrar_interaccion(tipo: str, exitoso: bool, agente_id: str,
@@ -87,6 +99,27 @@ def actualizar_circuitos_llm(estado_circuitos: dict) -> None:
             CIRCUITO_LLM_ACTIVO.labels(proveedor=proveedor).set(1 if info.get("activo") else 0)
     except Exception as exc:
         logger.warning("metrics_prometheus: fallo al actualizar circuitos (%s)", exc)
+
+
+def actualizar_carga_host(cpu_pct: float, mem_pct: float) -> None:
+    """Refleja la carga actual del host (Fase 21) para el panel de diagnostico."""
+    if not _DISPONIBLE:
+        return
+    try:
+        CARGA_HOST_PCT.labels(recurso="cpu").set(cpu_pct)
+        CARGA_HOST_PCT.labels(recurso="mem").set(mem_pct)
+    except Exception as exc:
+        logger.warning("metrics_prometheus: fallo al actualizar carga de host (%s)", exc)
+
+
+def registrar_circuito_concurrencia_abierto() -> None:
+    """Cuenta un rechazo del Circuit Breaker de Concurrencia (Fase 21)."""
+    if not _DISPONIBLE:
+        return
+    try:
+        CIRCUITO_CONCURRENCIA_ABIERTO.inc()
+    except Exception as exc:
+        logger.warning("metrics_prometheus: fallo al contar circuito de concurrencia (%s)", exc)
 
 
 def generar_exposicion() -> tuple[bytes, str]:

@@ -21,9 +21,12 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
+from core.services.resource_guard import costo_recursos
+
 logger = logging.getLogger(__name__)
 
 
+@costo_recursos(cpu="bajo", memoria="alto")
 def crear_backup() -> bytes:
     """Crea un ZIP de backup y devuelve sus bytes."""
     from core.path_manager import data_path, resource_path

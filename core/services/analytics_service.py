@@ -13,6 +13,7 @@ from collections import defaultdict
 from datetime import datetime as _dt, timedelta as _td
 
 from core.timeutil import utcnow
+from core.services.resource_guard import costo_recursos
 
 logger = logging.getLogger(__name__)
 
@@ -386,6 +387,7 @@ def leer_logs(n: int = 100, nivel: str = "all") -> dict:
         return {"entradas": [], "total": 0, "error": str(e)}
 
 
+@costo_recursos(cpu="alto", memoria="medio")
 def embeddings_3d(orquestador) -> dict:
     """
     Embeddings semánticos reales (TF-IDF + PCA): agentes similares quedan
