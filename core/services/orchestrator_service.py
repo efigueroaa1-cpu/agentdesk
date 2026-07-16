@@ -155,7 +155,9 @@ class OrchestratorService:
                           "aprobado", duracion_s, True,
                           contexto=f"archivo_id={archivo_id or '-'}",
                           modelo=getattr(agente, "modelo", ""),
-                          guardrails=list(getattr(getattr(agente, "pipeline", None), "ultimo_veredicto", []) or []))
+                          guardrails=list(getattr(getattr(agente, "pipeline", None), "ultimo_veredicto", []) or []),
+                          proveedor=getattr(agente, "ultimo_proveedor_llm", ""),
+                          tokens_reales=getattr(agente, "ultimo_tokens_llm", None))
             return {"ok": True, "agente_id": agente_id,
                     "agente_nombre": agente_nombre, "resultado": resultado}
 
@@ -170,12 +172,14 @@ class OrchestratorService:
     @staticmethod
     def _auditar(user_id, agente_id, tipo, prompt, respuesta, veredicto,
                  duracion_s, exitoso, contexto="", modelo="",
-                 herramientas=None, contexto_hats="", guardrails=None) -> None:
-        """Traza forense best-effort (ADR-0007/0014): nunca rompe la interacción."""
+                 herramientas=None, contexto_hats="", guardrails=None,
+                 proveedor="", tokens_reales=None) -> None:
+        """Traza forense best-effort (ADR-0007/0014/0017): nunca rompe la interacción."""
         from core.services.audit_service import registrar_interaccion
         registrar_interaccion(
             tipo=tipo, agente_id=agente_id, prompt=prompt, respuesta=respuesta,
             user_id=user_id, contexto=contexto, contexto_hats=contexto_hats, modelo=modelo,
+            proveedor=proveedor, tokens_reales=tokens_reales,
             herramientas=herramientas or [], veredicto_guardrail=veredicto,
             guardrails=guardrails or [], duracion_s=duracion_s, exitoso=exitoso,
         )
@@ -255,7 +259,9 @@ class OrchestratorService:
                       contexto=f"sesion={sesion_id} archivo_id={archivo_id or '-'}",
                       modelo=getattr(agente, "modelo", ""),
                       herramientas=herramientas_usadas,
-                      contexto_hats=getattr(agente, "ultimo_contexto_hats", ""))
+                      contexto_hats=getattr(agente, "ultimo_contexto_hats", ""),
+                      proveedor=getattr(agente, "ultimo_proveedor_llm", ""),
+                      tokens_reales=getattr(agente, "ultimo_tokens_llm", None))
         return {"respuesta": respuesta, "agente_id": agente_key,
                 "agente_nombre": agente.nombre, "agente_area": agente.area}
 

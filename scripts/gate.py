@@ -65,7 +65,12 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # enhebrados en los 4 call sites de ejecutar_herramienta (delegacion)
     # subio 1277->1288 (2026-07-15, ADR-0014): spans OTEL en chat_libre
     # (llm.generar) + canal lateral ultimo_contexto_hats para auditoria
-    "core/orchestrator.py":                                             1288,
+    # subio 1288->1325 (2026-07-16, ADR-0017): chat_libre/realizar_tarea
+    # cableados a llm_service.generar() (cadena de resiliencia real, en vez
+    # de core.providers.generate directo); gate de circuit breaker antes
+    # del loop de tool-calling nativo en chat_con_herramientas; canales
+    # laterales ultimo_proveedor_llm/ultimo_tokens_llm
+    "core/orchestrator.py":                                             1325,
     # tools.py subio 1120->1153 (2026-07-14): evaluador AST que reemplaza eval()
     # subio 1153->1209 (2026-07-15, ADR-0011): tool consultar_a_otro_agente
     # + set_orquestador() (delegacion cognitiva Speak/Listen)
@@ -82,14 +87,21 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # subio 584->601 (2026-07-16, ADR-0016): comentario extenso documentando
     # el hallazgo real de Fase 18 (StaticPool corrompia el cursor entre
     # hilos bajo escritura concurrente real; retirado) + PRAGMA busy_timeout
-    "core/database.py":                                                  601,
+    # subio 601->605 (2026-07-16, ADR-0017): columnas tokens_exactos +
+    # costo_usd_estimado en AuditoriaIA (FinOps IA)
+    "core/database.py":                                                  605,
     # gate.py mismo: crecio organicamente con cada fase (14 reglas nuevas
     # entre Fase 11 y 16). Se acepta el tamano del propio Guardian en vez
     # de partirlo artificialmente entre fases activas.
     # subio 590->642 (2026-07-16, ADR-0016): regla [BOOT-VALIDATION]
-    "scripts/gate.py":                                                   642,
+    # subio 642->? (2026-07-16, ADR-0017): regla [LLM-RESILIENCE]
+    "scripts/gate.py":                                                   700,
     "dashboard.py":                                                     1257,
     "ui/dashboard.py":                                                  1257,
+    # providers.py subio de <500 a 528 (2026-07-16, ADR-0017): generate_con_uso()
+    # + extraccion de tokens reales (usage) por cada uno de los 5 proveedores
+    # (Gemini/OpenAI/DeepSeek/Anthropic/Groq) para la auditoria FinOps
+    "core/providers.py":                                                 528,
 }
 
 # Reglas de capas (ADR-0002/0004): prefijo de carpeta -> imports prohibidos.
@@ -294,6 +306,51 @@ def check_boot_validation() -> list[str]:
             f"no se ve un sys.exit gobernado por sus 'criticos' -> el resultado "
             f"se calcula y se ignora, no es Fail-Hard de verdad"
         )
+    return errores
+
+
+# LLM sin resiliencia (Fase 19, ADR-0017): generate() es una llamada CRUDA
+# a un unico proveedor, sin circuit breaker ni fallback. \bgenerate\b NO
+# matchea "generate_stream"/"generate_con_uso" (serian "generate_" con un
+# caracter de palabra pegado, sin limite de palabra ahi) -- streaming queda
+# fuera a proposito (limitacion documentada en el ADR: no se puede
+# "des-enviar" texto ya emitido al cliente, mismo patron que la exclusion
+# de streaming del CritiqueHarness en ADR-0010).
+RE_LLM_SIN_RESILIENCIA = re.compile(
+    r"from\s+core\.providers\s+import\s+[\w\s,]*\bgenerate\b(?!_)"
+    r"|\bproviders\.generate\("
+)
+# Archivos donde una llamada cruda a generate() es legitima: providers.py
+# la define y generate() internamente llama a generate_con_uso(); el
+# propio llm_service.py es el envoltorio de resiliencia (usa
+# generate_con_uso, nunca generate a secas, pero se excluye por claridad).
+_LLM_RESILIENCIA_EXCLUIDOS = {"core/providers.py", "core/services/llm_service.py"}
+
+
+def check_llm_resilience(archivos: list[str]) -> list[str]:
+    """
+    ADR-0017 [LLM-RESILIENCE]: ninguna llamada al LLM fuera de
+    core/services/llm_service.py (el envoltorio de circuit breaker +
+    cadena de fallback) — un import o llamada directa a
+    core.providers.generate() se salta el circuit breaker por completo,
+    exactamente el hallazgo real que motivo esta fase (core/orchestrator.py
+    llamaba generate() directo, dejando la cadena de resiliencia de la
+    Fase 8 desconectada del chat real de los agentes).
+    """
+    errores = []
+    for rel in archivos:
+        if not (rel.startswith("core/") and rel.endswith(".py")):
+            continue
+        if rel in _LLM_RESILIENCIA_EXCLUIDOS:
+            continue
+        for n, linea in enumerate(leer(rel), 1):
+            sin_comentario = linea.split("#", 1)[0]
+            if RE_LLM_SIN_RESILIENCIA.search(sin_comentario):
+                errores.append(
+                    f"  [LLM-RESILIENCE] {rel}:{n}: {linea.strip()[:80]}  "
+                    f"<- llamada al LLM sin circuit breaker: usar "
+                    f"llm_service.generar() (core/services/llm_service.py)"
+                )
     return errores
 
 
@@ -604,6 +661,7 @@ def main() -> int:
     errores += check_credenciales_defecto(archivos)
     errores += check_pesado_sincrono(archivos)
     errores += check_boot_validation()
+    errores += check_llm_resilience(archivos)
     errores += check_tests_adaptadores(archivos)
     errores += check_bandit()
     errores += check_contrato_auth()

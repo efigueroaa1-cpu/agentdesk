@@ -167,9 +167,17 @@ class CritiqueHarness:
 
     @staticmethod
     async def _regenerar(contexto: dict) -> str | None:
-        """Segunda pasada al LLM pidiendo una respuesta corregida (best-effort)."""
+        """
+        Segunda pasada al LLM pidiendo una respuesta corregida (best-effort).
+
+        Fase 19 (ADR-0017) [LLM-RESILIENCE]: via llm_service.generar() en
+        vez de core.providers.generate directo -- si el proveedor del
+        agente esta caido justo cuando se necesita la regeneracion (el peor
+        momento para no tener red de seguridad), la cadena de fallback
+        igual intenta completarla en vez de rendirse de inmediato.
+        """
         try:
-            from core.providers import generate
+            from core.services.llm_service import llm_service
             prompt_correctivo = (
                 "La siguiente respuesta a un operador industrial fue rechazada "
                 "por autocrítica (posible violación de seguridad o respuesta "
@@ -182,7 +190,10 @@ class CritiqueHarness:
                 "Respuesta corregida:"
             )
             modelo = contexto.get("modelo") or "mock:agentdesk-demo"
-            return await generate(modelo, prompt_correctivo, 0.2)
+            resultado = await llm_service.generar(
+                prompt_correctivo, temperatura=0.2, modelo_preferido=modelo,
+            )
+            return resultado["texto"]
         except Exception as exc:
             logger.warning("CritiqueHarness: regeneracion fallo (%s)", exc)
             return None

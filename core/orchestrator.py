@@ -61,6 +61,13 @@ class AgentBase:
         # RECUPERADO, no solo el mensaje del usuario, sin cambiar la firma
         # de retorno de los metodos de chat.
         self.ultimo_contexto_hats = ""
+        # Fase 19 (ADR-0017): mismo patron de canal lateral -- que proveedor
+        # respondio REALMENTE (puede diferir de self.modelo si hubo
+        # fallback) y cuantos tokens exactos/estimados consumio la ultima
+        # llamada, para que orchestrator_service audite la cadena de
+        # resiliencia sin cambiar la firma de retorno de los metodos de chat.
+        self.ultimo_proveedor_llm = ""
+        self.ultimo_tokens_llm: dict = {}
 
     def reload_config(self, config: dict) -> bool:
         """
@@ -185,9 +192,7 @@ class AgentBase:
         La memoria guarda los últimos N mensajes en SQLite y los inyecta
         al prompt para que el agente mantenga el hilo de la conversación.
         """
-        from core.providers import generate as _gen, parse_model_id
         from core import memory as _mem
-        import asyncio as _asyncio
 
         aid = agente_id_clave or self.nombre
 
@@ -213,33 +218,33 @@ class AgentBase:
             f"Usuario: {mensaje}"
         )
 
-        # 4. Generar respuesta
+        # 4. Generar respuesta -- via la cadena de resiliencia (Fase 19,
+        # ADR-0017): self.modelo se intenta primero (eleccion del agente
+        # respetada), y si falla (429/503/timeout/red) la cadena salta
+        # automaticamente al siguiente proveedor sano en vez de devolver un
+        # mensaje pidiendole al usuario que reconfigure algo a mano. Solo
+        # lanza si TODA la cadena, incluido el mock final, falla -- un bug
+        # real, no un fallo de proveedor.
+        from core.services.llm_service import llm_service
         from core.telemetry_otel import medir_paso
         try:
             with medir_paso("llm.generar", agente=self.nombre, modelo=self.modelo):
-                respuesta = await _gen(self.modelo, prompt, self.temperatura)
+                resultado_llm = await llm_service.generar(
+                    prompt, temperatura=self.temperatura, modelo_preferido=self.modelo,
+                )
         except Exception as exc:
-            msg = str(exc)
-            es_429 = "429" in msg or "RESOURCE_EXHAUSTED" in msg or "quota" in msg.lower()
-            if es_429:
-                prov, _ = parse_model_id(self.modelo)
-                logger.warning("chat_libre '%s': cuota agotada en %s", self.nombre, prov,
-                               extra={"agente": self.nombre})
-                return (f"Cuota de {prov} agotada. "
-                        "Configura una API key de otro proveedor (Groq es gratuito) "
-                        "o espera al día siguiente.")
-            es_503 = "503" in msg or "UNAVAILABLE" in msg or "high demand" in msg
-            if es_503:
-                await _asyncio.sleep(5)
-                try:
-                    with medir_paso("llm.generar.reintento", agente=self.nombre, modelo=self.modelo):
-                        respuesta = await _gen(self.modelo, prompt, self.temperatura)
-                except Exception:
-                    return "Servicio temporalmente saturado. Intenta de nuevo en unos segundos."
-            else:
-                logger.error("chat_libre '%s': %s", self.nombre, exc,
-                             extra={"agente": self.nombre, "error_type": "chat_api"})
-                return f"Error al procesar la solicitud: {exc}"
+            logger.error("chat_libre '%s': cadena de resiliencia agotada (%s)",
+                         self.nombre, exc, extra={"agente": self.nombre, "error_type": "chat_api"})
+            return f"Error al procesar la solicitud: {exc}"
+
+        respuesta = resultado_llm["texto"]
+        self.ultimo_proveedor_llm = resultado_llm["proveedor"]
+        self.ultimo_tokens_llm    = {
+            "tokens_entrada": resultado_llm.get("tokens_entrada"),
+            "tokens_salida":  resultado_llm.get("tokens_salida"),
+            "tokens_total":   resultado_llm.get("tokens_total"),
+            "tokens_exactos": resultado_llm.get("tokens_exactos", False),
+        }
 
         # 5. Autocritica (CritiqueHarness, ADR-0010) + guardar en memoria
         respuesta = await self._criticar_respuesta(mensaje, respuesta, aid, user_id)
@@ -272,11 +277,30 @@ class AgentBase:
                                               user_id=user_id)
             return respuesta, []
 
+        # Fase 19 (ADR-0017): el loop de tool-calling nativo de abajo habla
+        # DIRECTO con el SDK del proveedor (necesita su protocolo propio de
+        # tool_calls, no el generar() de texto plano de llm_service) — pero
+        # comparte el MISMO circuito. Si ya esta abierto por fallos
+        # recientes, no tiene sentido intentarlo: saltar directo a
+        # chat_libre, que SI recorre la cadena de resiliencia completa.
+        from core.services.llm_service import llm_service
+        if not llm_service.disponible(proveedor):
+            logger.warning(
+                "chat_con_herramientas '%s': circuito de '%s' abierto, saltando a chat_libre",
+                self.nombre, proveedor, extra={"agente": self.nombre},
+            )
+            respuesta = await self.chat_libre(mensaje, sesion_id=sesion_id,
+                                              agente_id_clave=agente_id_clave,
+                                              user_id=user_id)
+            return respuesta, []
+
         aid = agente_id_clave or self.nombre
         _mem.guardar_mensaje(aid, sesion_id, "usuario", mensaje)
 
         async def _cerrar(texto: str) -> tuple[str, list[str]]:
             """Autocritica (CritiqueHarness, ADR-0010) + guardar en memoria."""
+            llm_service.registrar_exito(proveedor)   # ADR-0017: circuito compartido
+            self.ultimo_proveedor_llm = proveedor
             texto = await self._criticar_respuesta(mensaje, texto, aid, user_id)
             _mem.guardar_mensaje(aid, sesion_id, "agente", texto)
             return texto, herramientas_usadas
@@ -457,6 +481,13 @@ class AgentBase:
             return await _cerrar(respuesta)
 
         except Exception as exc:
+            # ADR-0017: el fallo del loop nativo TAMBIEN cuenta para el
+            # circuito compartido -- no solo los fallos vistos por generar().
+            # Sin esto, un proveedor que solo falla en tool-calling (p.ej.
+            # un endpoint de function-calling caido) nunca abriria su
+            # circuito, y cada mensaje pagaria el mismo timeout antes de
+            # caer a chat_libre en vez de saltarselo la proxima vez.
+            llm_service.registrar_fallo(proveedor, f"{type(exc).__name__}: {str(exc)[:120]}")
             logger.error("chat_con_herramientas '%s': %s", self.nombre, exc,
                          extra={"agente": self.nombre})
             respuesta = await self.chat_libre(mensaje, sesion_id=sesion_id,
@@ -813,8 +844,6 @@ class AgentBase:
                 '"evidencia": {"Nombre KPI en español": "fuente exacta del dato"}}'
             )
 
-        from core.providers import generate as _gen, parse_model_id
-
         raw_data = datos if isinstance(datos, dict) else {"_corpus": str(datos), "_es_texto_externo": True}
 
         # ── Bucle de auto-corrección: hasta 3 intentos ────────────────────────
@@ -822,21 +851,29 @@ class AgentBase:
         MAX_INTENTOS = 3
 
         for intento in range(1, MAX_INTENTOS + 1):
-            # Llamar al modelo de IA
+            # Llamar al modelo de IA -- via la cadena de resiliencia (Fase
+            # 19, ADR-0017). Antes: un 429/503 del proveedor configurado
+            # devolvia un _api_error pidiendole al usuario que reconfigure
+            # otro proveedor A MANO. Ahora la cadena salta automaticamente
+            # al siguiente proveedor sano; solo queda _api_error si TODA la
+            # cadena, incluido el mock final, falla -- un bug real.
+            from core.services.llm_service import llm_service
             try:
-                respuesta_raw = await _gen(self.modelo, instruccion_actual, self.temperatura)
+                resultado_llm = await llm_service.generar(
+                    instruccion_actual, temperatura=self.temperatura,
+                    modelo_preferido=self.modelo,
+                )
             except Exception as exc_rt:
-                msg_exc = str(exc_rt)
-                es_429  = "429" in msg_exc or "quota" in msg_exc.lower() or "RESOURCE_EXHAUSTED" in msg_exc
-                es_503  = "503" in msg_exc or "UNAVAILABLE" in msg_exc
-                prov, _ = parse_model_id(self.modelo)
-                if es_429:
-                    return {"_api_error": True, "_api_msg":
-                            f"Cuota de {prov} agotada. Configura Groq (gratis) en Sistema → Proveedores IA."}
-                if es_503:
-                    return {"_api_error": True, "_api_msg":
-                            f"El servicio {prov} no está disponible. Intenta de nuevo."}
-                return {"_api_error": True, "_api_msg": f"Error de API: {msg_exc[:120]}"}
+                return {"_api_error": True, "_api_msg": f"Error de API: {str(exc_rt)[:120]}"}
+
+            respuesta_raw = resultado_llm["texto"]
+            self.ultimo_proveedor_llm = resultado_llm["proveedor"]
+            self.ultimo_tokens_llm    = {
+                "tokens_entrada": resultado_llm.get("tokens_entrada"),
+                "tokens_salida":  resultado_llm.get("tokens_salida"),
+                "tokens_total":   resultado_llm.get("tokens_total"),
+                "tokens_exactos": resultado_llm.get("tokens_exactos", False),
+            }
 
             texto_limpio = respuesta_raw.replace("```json", "").replace("```", "").strip()
 

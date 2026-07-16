@@ -90,7 +90,13 @@ class TestLlmFallback(unittest.TestCase):
 
         svc._circuitos["groq"].abierto_hasta = 0.0   # simular fin de enfriamiento
         gen2 = _generador_con_fallos(fallan=set())
-        svc._generar = gen2                          # groq "se recuperó"
+
+        async def _gen2_con_uso(model_id, prompt, temperatura=0.4, prioridad=2):
+            texto = await gen2(model_id, prompt, temperatura, prioridad)
+            return {"texto": texto, "tokens_entrada": 1, "tokens_salida": 1,
+                    "tokens_total": 2, "tokens_exactos": False}
+
+        svc._generar_con_uso = _gen2_con_uso          # groq "se recuperó"
         r = _run(svc.generar("c"))
         self.assertEqual(r["proveedor"], "groq")
         self.assertTrue(svc.estado_circuitos()["groq"]["activo"])
