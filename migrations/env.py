@@ -1,6 +1,5 @@
 import os
 import sys
-from logging.config import fileConfig
 from pathlib import Path
 
 from sqlalchemy import engine_from_config
@@ -18,10 +17,14 @@ from core.database import Base  # noqa: E402
 # access to the values within the .ini file in use.
 config = context.config
 
-# Interpret the config file for Python logging.
-# This line sets up loggers basically.
-if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+# NO se llama a fileConfig(config.config_file_name) aqui a proposito
+# (hallazgo real, Fase 16/ADR-0014): AgentDesk corre `alembic upgrade
+# head` como LIBRERIA en cada init_db() — no como CLI standalone.
+# fileConfig() reconfigura el logger root con el [logger_root] level=WARNING
+# de alembic.ini, lo que silenciaba en produccion TODO el logging de la
+# app (incluidos los logs de auditoria forense) apenas corria una
+# migracion. Alembic sigue logueando sus propios mensajes igual (usa el
+# logger "alembic", que hereda la config que ya tenga el proceso host).
 
 target_metadata = Base.metadata
 

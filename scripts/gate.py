@@ -54,7 +54,9 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # diagnostico/auditoria + user_id en chat/tareas (F9, ADR-0007)
     # subio 1532->1534 (2026-07-15, ADR-0011): set_orquestador() en startup
     # para la delegacion cognitiva Speak/Listen
-    "core/api.py":                                                      1534,
+    # subio 1534->1552 (2026-07-15, ADR-0014): GET /metrics (Prometheus) +
+    # GET /diagnostico/tracing (spans OTEL en memoria)
+    "core/api.py":                                                      1552,
     # orchestrator subio 1215->1223 (2026-07-14): hook del sandbox Zero-Trust
     # subio 1223->1242 (2026-07-15, ADR-0009): self.harnesses + inyeccion del
     # contexto de HATs (_contexto_harnesses) en las 4 rutas de chat
@@ -63,21 +65,27 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # en chat_libre/chat_con_herramientas (CritiqueHarness post-hook)
     # subio 1269->1277 (2026-07-15, ADR-0011): agente_id_clave/user_id
     # enhebrados en los 4 call sites de ejecutar_herramienta (delegacion)
-    "core/orchestrator.py":                                             1277,
+    # subio 1277->1288 (2026-07-15, ADR-0014): spans OTEL en chat_libre
+    # (llm.generar) + canal lateral ultimo_contexto_hats para auditoria
+    "core/orchestrator.py":                                             1288,
     # tools.py subio 1120->1153 (2026-07-14): evaluador AST que reemplaza eval()
     # subio 1153->1209 (2026-07-15, ADR-0011): tool consultar_a_otro_agente
     # + set_orquestador() (delegacion cognitiva Speak/Listen)
-    "core/tools.py":                                                    1209,
+    # subio 1209->1217 (2026-07-15, ADR-0014): span OTEL tool.ejecutar
+    # envolviendo el dispatcher (_despachar_herramienta)
+    "core/tools.py":                                                    1217,
     # web_monitor.py subio 593->595 (2026-07-14): validacion de esquema http(s)
     "core/web_monitor.py":                                               595,
     # database.py subio 495->580 (2026-07-15, ADR-0013): migraciones Alembic
     # (_aplicar_migraciones) + chequeo async de conexion Postgres con
     # asyncpg (_verificar_conexion_async) antes de armar el engine sincrono
-    "core/database.py":                                                  580,
-    # gate.py mismo: crecio organicamente con cada fase (11 reglas nuevas
-    # entre Fase 11 y 15). Se acepta el tamano del propio Guardian en vez
+    # subio 580->584 (2026-07-15, ADR-0014): contexto_hats + guardrails_json
+    # en AuditoriaIA (auditoria forense completa)
+    "core/database.py":                                                  584,
+    # gate.py mismo: crecio organicamente con cada fase (14 reglas nuevas
+    # entre Fase 11 y 16). Se acepta el tamano del propio Guardian en vez
     # de partirlo artificialmente entre fases activas.
-    "scripts/gate.py":                                                   530,
+    "scripts/gate.py":                                                   590,
     "dashboard.py":                                                     1257,
     "ui/dashboard.py":                                                  1257,
 }
@@ -320,6 +328,50 @@ def check_credenciales_adapters_ot(archivos: list[str]) -> list[str]:
     return errores
 
 
+# Servicios/puertos existentes al momento de esta regla (2026-07-15, ADR-0014)
+# — grandfathered: no se les exige instrumentar retroactivamente. Todo
+# archivo NUEVO en core/services/ o core/ports/ que no este aqui debe
+# referenciar telemetry_otel o metrics_prometheus.
+SERVICIOS_PORTS_GRANDFATHERED = {
+    "core/ports/agent_port.py", "core/ports/auth_port.py", "core/ports/cognitive_port.py",
+    "core/ports/harness_port.py", "core/ports/orchestrator_port.py", "core/ports/pipeline_port.py",
+    "core/ports/queue_port.py", "core/ports/telemetry_port.py",
+    "core/services/agent_service.py", "core/services/analytics_service.py",
+    "core/services/audit_service.py", "core/services/auth_service.py",
+    "core/services/delegation_service.py", "core/services/gantt_report_service.py",
+    "core/services/harness_service.py", "core/services/insights_service.py",
+    "core/services/llm_service.py", "core/services/orchestrator_service.py",
+    "core/services/pipeline_service.py", "core/services/queue_service.py",
+    "core/services/report_service.py", "core/services/sandbox_service.py",
+    "core/services/upload_service.py",
+}
+
+
+def check_observabilidad(archivos: list[str]) -> list[str]:
+    """
+    ADR-0014 [OBSERVABILITY]: todo servicio o puerto NUEVO (core/services/,
+    core/ports/) debe incluir trazas de telemetria basicas — referenciar
+    core.telemetry_otel o core.metrics_prometheus. Los archivos existentes
+    a la fecha de esta regla quedan grandfathered (no se instrumentan
+    retroactivamente en este pase).
+    """
+    errores = []
+    for rel in archivos:
+        es_servicio_o_puerto = (
+            (rel.startswith("core/services/") or rel.startswith("core/ports/"))
+            and rel.endswith(".py") and not rel.endswith("__init__.py")
+        )
+        if not es_servicio_o_puerto or rel in SERVICIOS_PORTS_GRANDFATHERED:
+            continue
+        texto = "\n".join(leer(rel))
+        if "telemetry_otel" not in texto and "metrics_prometheus" not in texto:
+            errores.append(
+                f"  [OBSERVABILITY] {rel}: servicio/puerto nuevo sin trazas de "
+                f"telemetria -> referenciar core.telemetry_otel o core.metrics_prometheus"
+            )
+    return errores
+
+
 def check_seguridad_herramientas() -> list[str]:
     """
     ADR-0011 [TOOL-SECURITY]: ninguna herramienta expuesta a los agentes
@@ -418,6 +470,11 @@ def check_persistencia_dual() -> list[str]:
     return _correr_suite("tests.persistence.test_dual_mode", "DB-DUAL")
 
 
+def check_observabilidad_forense() -> list[str]:
+    """Fase 16: tracing OTEL, /metrics Prometheus y auditoria forense completa."""
+    return _correr_suite("tests.observability.test_otel_and_forensics", "OBSERVABILITY")
+
+
 def check_hats() -> list[str]:
     """Fases 11/12: HATs (ContextHarness + CritiqueHarness) — best-effort."""
     return (_correr_suite("tests.harnesses.test_memoria_harness", "HAT")
@@ -504,6 +561,8 @@ def main() -> int:
     errores += check_credenciales_adapters_ot(archivos)
     errores += check_concurrencia_telemetria()
     errores += check_persistencia_dual()
+    errores += check_observabilidad(archivos)
+    errores += check_observabilidad_forense()
 
     if errores:
         print(f"\nVIOLACIONES ({len(errores)}):")

@@ -137,6 +137,9 @@ class PipelineProcessor:
     def __init__(self, nombre_agente: str) -> None:
         self.nombre_agente = nombre_agente
         self._historial: deque[str] = deque(maxlen=_MAX_HISTORIAL)
+        # Veredicto de CADA guardrail evaluado en la ultima corrida
+        # (ADR-0014): registro forense completo, no solo el que aborta.
+        self.ultimo_veredicto: list[dict] = []
 
     # ── Punto de entrada ───────────────────────────────────────────────────────
 
@@ -166,39 +169,59 @@ class PipelineProcessor:
         cuando un guardrail rechaza, en lugar de None.
         Esto permite al orquestador corregir el error automáticamente.
         """
+        from core.telemetry_otel import medir_paso
+        veredictos: list[dict] = []
+
         # 1. RecursionGuard
         try:
-            await self._recursion_guard(respuesta_texto)
+            with medir_paso("guardrail.RecursionGuard", agente=self.nombre_agente):
+                await self._recursion_guard(respuesta_texto)
         except (RecursionLoopError, asyncio.TimeoutError) as exc:
             self._log_abort("RecursionGuard", exc, reporte, raw_data)
+            veredictos.append({"guardrail": "RecursionGuard", "veredicto": "rechazado", "razon": str(exc)})
+            self.ultimo_veredicto = veredictos
             return {"_abortado": True, "_guardrail": "RecursionGuard",
                     "_razon": f"Respuesta repetida detectada ({exc}). Genera una respuesta diferente con nueva perspectiva."}
+        veredictos.append({"guardrail": "RecursionGuard", "veredicto": "aprobado"})
 
         # 2. ToneGuard
         try:
-            await self._tone_guard(reporte)
+            with medir_paso("guardrail.ToneGuard", agente=self.nombre_agente):
+                await self._tone_guard(reporte)
         except (ToneError, asyncio.TimeoutError) as exc:
             self._log_abort("ToneGuard", exc, reporte, raw_data)
+            veredictos.append({"guardrail": "ToneGuard", "veredicto": "rechazado", "razon": str(exc)})
+            self.ultimo_veredicto = veredictos
             return {"_abortado": True, "_guardrail": "ToneGuard",
                     "_razon": f"Tono inapropiado: {exc}. Usa lenguaje profesional, técnico y objetivo sin coloquialismos."}
+        veredictos.append({"guardrail": "ToneGuard", "veredicto": "aprobado"})
 
         # 3. GroundingGuard
         try:
-            await self._grounding_guard(raw_data, reporte)
+            with medir_paso("guardrail.GroundingGuard", agente=self.nombre_agente):
+                await self._grounding_guard(raw_data, reporte)
         except (GroundingError, asyncio.TimeoutError) as exc:
             self._log_abort("GroundingGuard", exc, reporte, raw_data)
+            veredictos.append({"guardrail": "GroundingGuard", "veredicto": "rechazado", "razon": str(exc)})
+            self.ultimo_veredicto = veredictos
             return {"_abortado": True, "_guardrail": "GroundingGuard",
                     "_razon": (f"Valores en 'evidencia' no encontrados en los datos originales: {exc}. "
                                "Cita los valores EXACTAMENTE como aparecen en los datos, sin redondear ni formatear diferente.")}
+        veredictos.append({"guardrail": "GroundingGuard", "veredicto": "aprobado"})
 
         # 4. LogicIntegrityFilter
         try:
-            reporte = await self._logic_integrity_filter(raw_data, reporte)
+            with medir_paso("guardrail.LogicIntegrityFilter", agente=self.nombre_agente):
+                reporte = await self._logic_integrity_filter(raw_data, reporte)
         except asyncio.TimeoutError as exc:
             self._log_abort("LogicIntegrityFilter", exc, reporte, raw_data)
+            veredictos.append({"guardrail": "LogicIntegrityFilter", "veredicto": "rechazado", "razon": str(exc)})
+            self.ultimo_veredicto = veredictos
             return {"_abortado": True, "_guardrail": "LogicIntegrity",
                     "_razon": f"Timeout en verificación de integridad: {exc}."}
+        veredictos.append({"guardrail": "LogicIntegrityFilter", "veredicto": "aprobado"})
 
+        self.ultimo_veredicto = veredictos
         return reporte
 
     # ── Filtros ────────────────────────────────────────────────────────────────

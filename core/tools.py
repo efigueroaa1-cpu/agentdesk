@@ -1154,6 +1154,14 @@ async def ejecutar_herramienta(nombre: str, argumentos: dict, *,
                                 agente_id_clave: str = "", user_id: str = "anonimo") -> str:
     """Ejecuta una herramienta por nombre y devuelve el resultado como string."""
     logger.info("Tool call: %s(%s)", nombre, list(argumentos.keys()))
+    from core.telemetry_otel import medir_paso
+    with medir_paso("tool.ejecutar", herramienta=nombre, agente=agente_id_clave):
+        return await _despachar_herramienta(nombre, argumentos,
+                                            agente_id_clave=agente_id_clave, user_id=user_id)
+
+
+async def _despachar_herramienta(nombre: str, argumentos: dict, *,
+                                  agente_id_clave: str = "", user_id: str = "anonimo") -> str:
     try:
         if nombre == "consultar_a_otro_agente":
             return await _consultar_a_otro_agente(
