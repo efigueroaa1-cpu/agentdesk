@@ -1,14 +1,20 @@
 """
-core/api_auth.py — Adaptador de entrada HTTP para Autenticación y RBAC.
+core/api/auth_router.py — Adaptador de entrada HTTP para Autenticación y RBAC.
 
-Extraído de core/api.py (migración hexagonal, ADR-0002). Contiene:
+Extraído originalmente de core/api.py como core/api_auth.py (migración
+hexagonal, ADR-0002); reubicado a core/api/auth_router.py en la Fase 17
+(ADR-0015) al convertir core/api.py en el paquete core/api/. Contenido y
+comportamiento sin cambios respecto al core/api_auth.py anterior — mismo
+router, mismo middleware, mismas rutas.
+
+Contiene:
   - JWTMiddleware: decodifica el Bearer token y publica usuario/rol en
     request.state; exige token solo en mutaciones sensibles.
   - router: endpoints /auth/* (login, verificar, cambiar-password y CRUD
     de usuarios solo-admin). La lógica vive en core/services/auth_service.py;
     aquí solo se traduce HTTP ⇄ servicio.
 
-core/api.py lo registra con app.add_middleware(JWTMiddleware) y
+core/api/__init__.py lo registra con app.add_middleware(JWTMiddleware) y
 app.include_router(router) — mismas rutas y semántica que antes del split.
 """
 from __future__ import annotations

@@ -5,7 +5,7 @@ tests/contract/test_auth_contract.py — Test-Contrato de Seguridad Crítica.
 Invariante: NADIE puede añadir un endpoint de escritura (POST/PUT/DELETE/PATCH)
 sin protección JWT por accidente. Cada ruta de escritura debe estar:
   a) protegida por el JWTMiddleware (métodos protegidos o rutas siempre
-     protegidas de core/api_auth.py), o
+     protegidas de core/api/auth_router.py), o
   b) declarada EXPLÍCITAMENTE en RUTAS_PUBLICAS_AUTORIZADAS con su justificación.
 
 Si alguien agrega una ruta de escritura nueva y no la clasifica aquí de forma
@@ -18,7 +18,7 @@ import unittest
 from fastapi.testclient import TestClient
 
 from core.api import app
-from core.api_auth import _METODOS_PROTEGIDOS, _RUTAS_SIEMPRE_PROTEGIDAS
+from core.api.auth_router import _METODOS_PROTEGIDOS, _RUTAS_SIEMPRE_PROTEGIDAS
 
 METODOS_ESCRITURA = {"POST", "PUT", "DELETE", "PATCH"}
 

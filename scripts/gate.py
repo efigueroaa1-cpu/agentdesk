@@ -50,13 +50,11 @@ LEGACY_OVERSIZE: dict[str, int] = {
     "agentdesk-dashboard/src/components/pipeline/PipelineControl.jsx":  1050,
     "agentdesk-dashboard/src/components/proyectos/ProyectosModule.jsx": 1127,
     "agentdesk-dashboard/src/components/settings/SecurityPanel.jsx":     898,
-    # api.py 2865->1493 (ADR-0003); +3 QueuePort (F8); +36 endpoints de
-    # diagnostico/auditoria + user_id en chat/tareas (F9, ADR-0007)
-    # subio 1532->1534 (2026-07-15, ADR-0011): set_orquestador() en startup
-    # para la delegacion cognitiva Speak/Listen
-    # subio 1534->1552 (2026-07-15, ADR-0014): GET /metrics (Prometheus) +
-    # GET /diagnostico/tracing (spans OTEL en memoria)
-    "core/api.py":                                                      1552,
+    # core/api.py (2865->1552 lineas, ADR-0003/0007/0011/0014) se retiro de
+    # esta tabla en la Fase 17 (ADR-0015): dejo de ser un archivo unico y
+    # paso a ser el paquete core/api/ (un router por dominio, cada archivo
+    # nuevo nace bajo MAX_LINEAS por diseno — ver check_pesado_sincrono()
+    # mas abajo, que ahora recorre todo el paquete en vez de un solo archivo).
     # orchestrator subio 1215->1223 (2026-07-14): hook del sandbox Zero-Trust
     # subio 1223->1242 (2026-07-15, ADR-0009): self.harnesses + inyeccion del
     # contexto de HATs (_contexto_harnesses) en las 4 rutas de chat
@@ -91,7 +89,12 @@ LEGACY_OVERSIZE: dict[str, int] = {
 }
 
 # Reglas de capas (ADR-0002/0004): prefijo de carpeta -> imports prohibidos.
-CAPA_API = re.compile(r"^\s*(from|import)\s+core\.(api|api_auth)\b")
+# Desde la Fase 17 (ADR-0015) core/api es un paquete (core/api/_state.py,
+# core/api/schemas.py, core/api/*_router.py); \b tras "api" ya cubre
+# core.api._state, core.api.schemas, core.api.agentes_router, etc. — ningun
+# submodulo del paquete api es importable desde domain/ports/services/
+# repositories/adapters.
+CAPA_API = re.compile(r"^\s*(from|import)\s+core\.api\b")
 CAPA_ADAPTERS = re.compile(r"^\s*(from|import)\s+core\.adapters\b")
 FRAMEWORKS = re.compile(r"^\s*(from|import)\s+(fastapi|starlette)\b")
 FRAMEWORKS_Y_ORM = re.compile(r"^\s*(from|import)\s+(fastapi|starlette|sqlalchemy|pydantic)\b")
@@ -221,20 +224,24 @@ def check_credenciales_defecto(archivos: list[str]) -> list[str]:
 
 
 # Lógica pesada síncrona (Fase 8): estas funciones bloquean el event loop si
-# se llaman directo desde un endpoint. En core/api.py DEBEN pasar por el
-# QueuePort (queue_service.ejecutar_pesado / encolar).
+# se llaman directo desde un endpoint. En el paquete core/api/ (Fase 17,
+# ADR-0015 — antes un unico core/api.py) DEBEN pasar por el QueuePort
+# (queue_service.ejecutar_pesado / encolar), sin importar en que router vivan.
 RE_PESADO = re.compile(r"\b(generar_pdf_gantt|embeddings_3d|crear_backup|_gen_pdf)\s*\(")
 
 
-def check_pesado_sincrono() -> list[str]:
+def check_pesado_sincrono(archivos: list[str]) -> list[str]:
     errores = []
-    for n, linea in enumerate(leer("core/api.py"), 1):
-        limpia = linea.strip()
-        if limpia.startswith(("def ", "async def ", "from ", "import ", "#")):
+    for rel in archivos:
+        if not (rel.startswith("core/api/") and rel.endswith(".py")):
             continue
-        if RE_PESADO.search(linea) and "ejecutar_pesado" not in linea and "encolar" not in linea:
-            errores.append(f"  [PESADO]  core/api.py:{n}: {limpia[:80]}  "
-                           f"<- logica pesada sincrona: usar queue_service (QueuePort)")
+        for n, linea in enumerate(leer(rel), 1):
+            limpia = linea.strip()
+            if limpia.startswith(("def ", "async def ", "from ", "import ", "#")):
+                continue
+            if RE_PESADO.search(linea) and "ejecutar_pesado" not in linea and "encolar" not in linea:
+                errores.append(f"  [PESADO]  {rel}:{n}: {limpia[:80]}  "
+                               f"<- logica pesada sincrona: usar queue_service (QueuePort)")
     return errores
 
 
@@ -543,7 +550,7 @@ def main() -> int:
     errores += check_imports(archivos)
     errores += check_ejecucion_peligrosa(archivos)
     errores += check_credenciales_defecto(archivos)
-    errores += check_pesado_sincrono()
+    errores += check_pesado_sincrono(archivos)
     errores += check_tests_adaptadores(archivos)
     errores += check_bandit()
     errores += check_contrato_auth()
