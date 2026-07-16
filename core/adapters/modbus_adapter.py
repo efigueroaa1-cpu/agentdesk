@@ -77,6 +77,15 @@ class ModbusTelemetryAdapter(BaseTelemetryAdapter):
             raise ConnectionError(f"Modbus error leyendo {sensor['registro']}: {respuesta}")
         return round(respuesta.registers[0] * sensor["escala"], 2)
 
+    async def _reconectar(self) -> None:
+        """Cierra el cliente Modbus roto para forzar una conexión nueva (ADR-0012)."""
+        if self._cliente is not None:
+            try:
+                self._cliente.close()
+            except Exception:
+                pass
+            self._cliente = None
+
     def detener(self) -> None:
         super().detener()
         if self._cliente is not None:

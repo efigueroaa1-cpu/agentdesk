@@ -257,6 +257,61 @@ def check_harnesses() -> list[str]:
     return errores
 
 
+_METRIC_EVENT_CAMPOS = {"fuente", "tipo", "valor", "unidad", "ts", "nivel", "metadata"}
+
+
+def check_contrato_metric_event(archivos: list[str]) -> list[str]:
+    """
+    ADR-0001/0012 [METRIC-CONTRACT]: todo MetricEvent(...) construido en un
+    adaptador OT (core/adapters/*.py) debe usar EXCLUSIVAMENTE los campos
+    reales del contrato normalizado (fuente, tipo, valor, unidad, ts, nivel,
+    metadata) — un adaptador que se desvia del contrato rompe el puente
+    hacia el dashboard y el reactor industrial sin avisar hasta runtime.
+    """
+    errores = []
+    for rel in archivos:
+        if not (rel.startswith("core/adapters/") and rel.endswith(".py")):
+            continue
+        texto = "\n".join(leer(rel))
+        for m in re.finditer(r"MetricEvent\(([^)]*)\)", texto, re.S):
+            campos_usados = re.findall(r"(\w+)\s*=", m.group(1))
+            desconocidos = [c for c in campos_usados if c not in _METRIC_EVENT_CAMPOS]
+            if desconocidos:
+                n = texto[:m.start()].count("\n") + 1
+                errores.append(
+                    f"  [METRIC-CONTRACT] {rel}:{n}: MetricEvent con campos fuera de "
+                    f"contrato: {desconocidos} (validos: {sorted(_METRIC_EVENT_CAMPOS)})"
+                )
+    return errores
+
+
+# Credenciales embebidas en una URI de conexion (usuario:clave@host) — el
+# antipatron clasico en adaptadores OT. Los adaptadores reales de este
+# proyecto usan os.environ.get(...) para host/broker/endpoint; un literal
+# con esta forma delata una credencial hardcodeada evadiendo eso.
+RE_CRED_EN_URI = re.compile(r"[\"'][a-z][a-z0-9+.\-]*://[^/\s\"']+:[^/\s\"']+@")
+
+
+def check_credenciales_adapters_ot(archivos: list[str]) -> list[str]:
+    """
+    ADR-0012 [TOOL-SECURITY]: ningun adaptador OT puede tener una credencial
+    de conexion (usuario:clave@host) hardcodeada como literal — debe leerse
+    de una variable de entorno (AGENTDESK_*_HOST/BROKER/ENDPOINT) o de un
+    KeyVault, nunca embebida en el codigo versionado.
+    """
+    errores = []
+    for rel in archivos:
+        if not (rel.startswith("core/adapters/") and rel.endswith(".py")):
+            continue
+        for n, linea in enumerate(leer(rel), 1):
+            if RE_CRED_EN_URI.search(linea):
+                errores.append(
+                    f"  [TOOL-SECURITY] {rel}:{n}: credencial embebida en URI de "
+                    f"conexion -> usa variable de entorno o KeyVault"
+                )
+    return errores
+
+
 def check_seguridad_herramientas() -> list[str]:
     """
     ADR-0011 [TOOL-SECURITY]: ninguna herramienta expuesta a los agentes
@@ -401,6 +456,8 @@ def main() -> int:
     errores += check_aislamiento_memoria()
     errores += check_seguridad_herramientas()
     errores += check_fase13()
+    errores += check_contrato_metric_event(archivos)
+    errores += check_credenciales_adapters_ot(archivos)
 
     if errores:
         print(f"\nVIOLACIONES ({len(errores)}):")
