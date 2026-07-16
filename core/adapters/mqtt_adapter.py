@@ -105,7 +105,24 @@ class MqttTelemetryAdapter(BaseTelemetryAdapter):
         cliente = mqtt.Client()
         cliente.on_message = _on_message
         host, _, puerto = self._broker.partition(":")
-        cliente.connect(host, int(puerto or 1883), keepalive=30)
+
+        # Conexion inicial con backoff exponencial (ADR-0012): connect() es
+        # sincrono y lanza de inmediato si el broker esta caido — el
+        # reintento automatico de paho-mqtt (loop_start) solo actua DESPUES
+        # de una primera conexion exitosa, no antes.
+        backoff_s = 2.0
+        while True:
+            try:
+                cliente.connect(host, int(puerto or 1883), keepalive=30)
+                break
+            except Exception as exc:
+                logger.warning(
+                    "Adaptador MQTT: fallo al conectar a %s (%s) — reintento en %.0fs",
+                    self._broker, exc, backoff_s,
+                )
+                await asyncio.sleep(backoff_s)
+                backoff_s = min(backoff_s * 2, 60.0)
+
         for s in SENSORES:
             cliente.subscribe(s["topic"])
         cliente.loop_start()

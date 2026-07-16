@@ -70,3 +70,8 @@ class OpcUaTelemetryAdapter(BaseTelemetryAdapter):
             "Conexión OPC-UA real pendiente de la fase de planta: requiere "
             "endpoint accesible y mapeo de nodeIds definitivo (ver ADR-0004)."
         )
+
+    async def _reconectar(self) -> None:
+        """Cierra el cliente OPC-UA roto para forzar una conexión nueva (ADR-0012)."""
+        if self._cliente is not None:
+            self._cliente = None
