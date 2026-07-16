@@ -95,6 +95,13 @@ class PresupuestoPayload(BaseModel):
     periodos:    int = 6
 
 
+class MapReduceRequest(BaseModel):
+    """Payload para POST /orquestador/mapreduce (Fase 21, ADR-0019)."""
+    lider_id:         str
+    trabajadores_ids: list[str]
+    prompt:            str
+
+
 class WhatsAppWebhookPayload(BaseModel):
     """Payload del webhook remoto (WhatsApp, curl, cron, etc.)."""
     mensaje:     str
