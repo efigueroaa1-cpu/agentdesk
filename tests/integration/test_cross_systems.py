@@ -81,16 +81,25 @@ class TestInteraccionCruzadaHATDelegacionAuditoria(unittest.IsolatedAsyncioTestC
 
     @staticmethod
     def _espiar_prompts():
-        """Intercepta core.providers.generate para capturar el prompt real enviado al LLM."""
-        import core.providers as providers
-        original = providers.generate
+        """
+        Intercepta el generador interno del singleton llm_service para
+        capturar el prompt real enviado al LLM. Desde la Fase 19
+        (ADR-0017) chat_libre pasa por llm_service.generar() en vez de
+        core.providers.generate directo -- y llm_service._generar_con_uso
+        se resolvio a un objeto funcion concreto en el momento en que se
+        construyo el singleton (import time), asi que parchear el atributo
+        del MODULO core.providers no lo alcanza. Hay que parchear el
+        atributo de la INSTANCIA del singleton.
+        """
+        from core.services.llm_service import llm_service
+        original = llm_service._generar_con_uso
         capturados: list[str] = []
 
-        async def _espia(model_id, prompt, temperature=0.4):
+        async def _espia(model_id, prompt, temperature=0.4, prioridad=2):
             capturados.append(prompt)
-            return await original(model_id, prompt, temperature)
+            return await original(model_id, prompt, temperature, prioridad)
 
-        return patch("core.providers.generate", side_effect=_espia), capturados
+        return patch.object(llm_service, "_generar_con_uso", side_effect=_espia), capturados
 
     async def test_01_delegacion_activa_memoria_hat_del_agente_destino(self):
         """

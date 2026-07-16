@@ -1,5 +1,6 @@
 """
-core/services/llm_service.py — Resiliencia de Inteligencia (Fase 8, ADR-0006).
+core/services/llm_service.py — Resiliencia de Inteligencia (Fase 8, ADR-0006;
+extendido en Fase 19, ADR-0017).
 
 Cadena de fallback automática con Circuit Breaker por proveedor:
 
@@ -13,6 +14,16 @@ Cadena de fallback automática con Circuit Breaker por proveedor:
 - El eslabón final es el MockProvider (determinista, sin red): la inteligencia
   degrada, pero el sistema NUNCA deja de responder — 99.9% de uptime de
   inteligencia por diseño, no por fe en la infalibilidad de un proveedor.
+
+Fase 19 (ADR-0017), hallazgo real: esta cadena existía desde la Fase 8 pero
+`core/orchestrator.py` (el chat/tarea real de cada agente) llamaba a
+`core.providers.generate` DIRECTO, sin pasar por aquí — la resiliencia
+estaba implementada pero desconectada del camino real. `generar()` ahora
+acepta `modelo_preferido` (el modelo configurado del agente): la cadena
+SIEMPRE lo intenta primero — el fallback nunca anula la elección explícita
+del usuario, solo la protege — y cae al resto de la cadena estándar si
+falla. También propaga el conteo de tokens (real cuando el proveedor lo
+expone, estimado si no) para la auditoría FinOps.
 """
 from __future__ import annotations
 
@@ -66,13 +77,27 @@ class LlmService:
     def __init__(
         self,
         generador: Callable[[str, str, float, int], Awaitable[str]] | None = None,
+        generador_con_uso: Callable[[str, str, float, int], Awaitable[dict]] | None = None,
         cadena: list[tuple[str, str]] | None = None,
         latencia_max_s: float = LATENCIA_MAX_S,
     ):
-        if generador is None:
-            from core.providers import generate as _generate
-            generador = _generate
-        self._generar        = generador
+        if generador_con_uso is not None:
+            self._generar_con_uso = generador_con_uso
+        elif generador is not None:
+            # Compatibilidad con dobles de test anteriores a Fase 19, que
+            # inyectan un generador string-only (sin conteo de tokens).
+            async def _adaptar(model_id: str, prompt: str, temperatura: float,
+                               prioridad: int) -> dict:
+                texto = await generador(model_id, prompt, temperatura, prioridad)
+                entrada, salida = len(prompt) // 4, len(texto) // 4
+                return {"texto": texto, "tokens_entrada": entrada,
+                        "tokens_salida": salida, "tokens_total": entrada + salida,
+                        "tokens_exactos": False}
+            self._generar_con_uso = _adaptar
+        else:
+            from core.providers import generate_con_uso as _generate_con_uso
+            self._generar_con_uso = _generate_con_uso
+
         self._cadena         = cadena or list(CADENA_FALLBACK)
         self._latencia_max_s = latencia_max_s
         self._circuitos: dict[str, CircuitBreaker] = {
@@ -81,6 +106,62 @@ class LlmService:
         from collections import deque
         self._latencias: dict[str, deque] = {p: deque(maxlen=20) for p, _ in self._cadena}
         self._ultimo_error: dict[str, str] = {}
+
+    def disponible(self, proveedor: str) -> bool:
+        """
+        True si el circuito de `proveedor` esta cerrado (o en semi-abierto).
+        Fase 19: permite a un llamador que NO pasa por generar() (ej. el
+        loop de tool-calling nativo de chat_con_herramientas, que habla
+        directo con el SDK del proveedor por las herramientas) consultar
+        el mismo circuito compartido antes de intentar una llamada costosa.
+        Un proveedor sin circuito propio (nunca visto) se considera
+        disponible -- no hay evidencia de que este fallando.
+        """
+        cb = self._circuitos.get(proveedor)
+        return cb.disponible() if cb else True
+
+    def registrar_fallo(self, proveedor: str, motivo: str = "") -> None:
+        """
+        Reporta un fallo al circuito compartido desde fuera de generar()
+        (Fase 19) -- mismo circuito que ve /diagnostico/llm y que protege
+        la cadena de fallback. Crea el circuito si el proveedor es nuevo.
+        """
+        if proveedor not in self._circuitos:
+            from collections import deque
+            self._circuitos[proveedor] = CircuitBreaker()
+            self._latencias[proveedor] = deque(maxlen=20)
+        self._circuitos[proveedor].registrar_fallo()
+        if motivo:
+            self._ultimo_error[proveedor] = motivo
+        logger.warning("CIRCUIT_BREAKER: '%s' fallo reportado externamente (%s)",
+                       proveedor, motivo)
+
+    def registrar_exito(self, proveedor: str) -> None:
+        """Reporta un exito al circuito compartido desde fuera de generar() (Fase 19)."""
+        cb = self._circuitos.get(proveedor)
+        if cb:
+            cb.registrar_exito()
+
+    def _cadena_efectiva(self, modelo_preferido: str | None) -> list[tuple[str, str]]:
+        """
+        Sin modelo_preferido: la cadena estandar (groq->gemini->openai->mock).
+        Con modelo_preferido (el modelo configurado del agente): ese
+        proveedor se intenta SIEMPRE primero -- el fallback nunca anula la
+        eleccion explicita del usuario, solo la protege -- y el resto de la
+        cadena estandar sigue disponible como red de seguridad si falla.
+        Si el proveedor preferido no tenia circuito propio (no esta en la
+        cadena estandar, ej. anthropic), se le crea uno nuevo aqui mismo.
+        """
+        if not modelo_preferido:
+            return self._cadena
+        from core.providers import parse_model_id
+        proveedor_pref, _ = parse_model_id(modelo_preferido)
+        if proveedor_pref not in self._circuitos:
+            from collections import deque
+            self._circuitos[proveedor_pref] = CircuitBreaker()
+            self._latencias[proveedor_pref] = deque(maxlen=20)
+        resto = [(p, m) for p, m in self._cadena if p != proveedor_pref]
+        return [(proveedor_pref, modelo_preferido)] + resto
 
     def estado_circuitos(self) -> dict:
         """Diagnóstico para el Módulo Diagnóstico: estado OPEN/CLOSED,
@@ -102,15 +183,21 @@ class LlmService:
         return estado
 
     async def generar(self, prompt: str, temperatura: float = 0.4,
-                      prioridad: int = 2) -> dict:
+                      prioridad: int = 2, modelo_preferido: str | None = None) -> dict:
         """
         Recorre la cadena de fallback hasta obtener respuesta.
-        Retorna {"texto", "proveedor", "modelo", "intentos", "degradado"}.
+
+        modelo_preferido (Fase 19): si se especifica (ej. el modelo
+        configurado del agente que llama), su proveedor se intenta SIEMPRE
+        primero, protegido por su propio circuito -- ver _cadena_efectiva().
+
+        Retorna {"texto", "proveedor", "modelo", "intentos", "degradado",
+        "tokens_entrada", "tokens_salida", "tokens_total", "tokens_exactos"}.
         Solo lanza si TODOS los eslabones fallan (con mock al final, no ocurre
         salvo bug interno: el mock no usa red).
         """
         intentos: list[str] = []
-        for proveedor, modelo in self._cadena:
+        for proveedor, modelo in self._cadena_efectiva(modelo_preferido):
             cb = self._circuitos[proveedor]
             if not cb.disponible():
                 intentos.append(f"{proveedor}:circuito-abierto")
@@ -118,8 +205,8 @@ class LlmService:
 
             t0 = time.monotonic()
             try:
-                texto = await asyncio.wait_for(
-                    self._generar(modelo, prompt, temperatura, prioridad),
+                resultado_gen = await asyncio.wait_for(
+                    self._generar_con_uso(modelo, prompt, temperatura, prioridad),
                     timeout=self._latencia_max_s,
                 )
                 cb.registrar_exito()
@@ -131,11 +218,15 @@ class LlmService:
                         proveedor, intentos,
                     )
                 return {
-                    "texto":     texto,
+                    "texto":     resultado_gen["texto"],
                     "proveedor": proveedor,
                     "modelo":    modelo,
                     "intentos":  intentos + [f"{proveedor}:ok"],
                     "degradado": proveedor == "mock",
+                    "tokens_entrada": resultado_gen.get("tokens_entrada"),
+                    "tokens_salida":  resultado_gen.get("tokens_salida"),
+                    "tokens_total":   resultado_gen.get("tokens_total"),
+                    "tokens_exactos": resultado_gen.get("tokens_exactos", False),
                 }
             except asyncio.TimeoutError:
                 cb.registrar_fallo()

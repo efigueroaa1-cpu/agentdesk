@@ -212,11 +212,45 @@ async def generate(model_id: str, prompt: str, temperature: float = 0.4,
     Función unificada de generación de texto con rate limiting.
     prioridad: 1=alta (chat), 2=media (análisis), 3=baja (batch automático)
     """
+    resultado = await generate_con_uso(model_id, prompt, temperature, prioridad)
+    return resultado["texto"]
+
+
+def _uso_estimado(prompt: str, texto: str) -> dict:
+    """
+    Fallback cuando el SDK del proveedor no expone metadata real de uso
+    (o el proveedor es el mock). Misma aproximación que auditoria_ia usa
+    desde la Fase 7 (chars/4) — NUNCA se presenta como exacto.
+    """
+    entrada = len(prompt) // 4
+    salida  = len(texto) // 4
+    return {
+        "tokens_entrada": entrada, "tokens_salida": salida,
+        "tokens_total": entrada + salida, "tokens_exactos": False,
+    }
+
+
+async def generate_con_uso(model_id: str, prompt: str, temperature: float = 0.4,
+                           prioridad: int = 2) -> dict:
+    """
+    Como generate(), pero retorna también el conteo de tokens (Fase 19,
+    ADR-0017: FinOps IA). Cuando el SDK del proveedor expone uso real en la
+    respuesta (OpenAI/Groq/DeepSeek: response.usage; Gemini:
+    response.usage_metadata; Anthropic: message.usage) se usa ESE valor
+    exacto (tokens_exactos=True); si no está disponible se degrada a la
+    estimación chars/4 histórica (tokens_exactos=False) — nunca se rompe
+    la generación por no poder contar tokens.
+
+    Retorna {"texto", "proveedor", "modelo", "tokens_entrada",
+    "tokens_salida", "tokens_total", "tokens_exactos"}.
+    """
     proveedor, modelo = parse_model_id(model_id)
 
     # Modo Demo/Dry-Run: respuesta local determinista sin rate limiter ni red
     if proveedor == "mock" or modo_mock_activo():
-        return await _mock(modelo, prompt, temperature)
+        texto = await _mock(modelo, prompt, temperature)
+        return {"texto": texto, "proveedor": "mock", "modelo": modelo,
+                **_uso_estimado(prompt, texto)}
 
     _fn_map = {
         "gemini":    _gemini,
@@ -233,19 +267,27 @@ async def generate(model_id: str, prompt: str, temperature: float = 0.4,
     try:
         from core.rate_limiter import llamada_protegida, Prioridad
         prio = Prioridad(prioridad) if prioridad in (1, 2, 3) else Prioridad.MEDIA
-        return await llamada_protegida(
+        texto, uso = await llamada_protegida(
             proveedor,
             lambda: fn(modelo, prompt, temperature),
             prio,
         )
     except ImportError:
         # Fallback sin rate limiter si no está disponible
-        return await fn(modelo, prompt, temperature)
+        texto, uso = await fn(modelo, prompt, temperature)
+
+    if uso is None:
+        uso = _uso_estimado(prompt, texto)
+    return {"texto": texto, "proveedor": proveedor, "modelo": modelo, **uso}
 
 
 # ── Implementaciones por proveedor ─────────────────────────────────────────────
+# Cada función retorna (texto, uso) — uso es un dict con tokens_entrada/
+# tokens_salida/tokens_total/tokens_exactos=True cuando el SDK expone la
+# metadata real, o None si no se pudo extraer (generate_con_uso degrada a
+# la estimacion chars/4 en ese caso).
 
-async def _gemini(modelo: str, prompt: str, temperature: float) -> str:
+async def _gemini(modelo: str, prompt: str, temperature: float) -> tuple[str, dict | None]:
     from google import genai
     from google.genai import types
     api_key = os.environ.get("GEMINI_API_KEY", "")
@@ -255,10 +297,22 @@ async def _gemini(modelo: str, prompt: str, temperature: float) -> str:
         contents=prompt,
         config=types.GenerateContentConfig(temperature=temperature),
     )
-    return resp.text.strip()
+    texto = resp.text.strip()
+    uso   = None
+    try:
+        um = resp.usage_metadata
+        if um is not None:
+            entrada = int(um.prompt_token_count or 0)
+            salida  = int(um.candidates_token_count or 0)
+            uso = {"tokens_entrada": entrada, "tokens_salida": salida,
+                   "tokens_total": int(um.total_token_count or entrada + salida),
+                   "tokens_exactos": True}
+    except (AttributeError, TypeError):
+        pass
+    return texto, uso
 
 
-async def _openai(modelo: str, prompt: str, temperature: float) -> str:
+async def _openai(modelo: str, prompt: str, temperature: float) -> tuple[str, dict | None]:
     from openai import AsyncOpenAI
     client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
     resp   = await client.chat.completions.create(
@@ -266,10 +320,11 @@ async def _openai(modelo: str, prompt: str, temperature: float) -> str:
         messages=[{"role": "user", "content": prompt}],
         temperature=temperature,
     )
-    return resp.choices[0].message.content.strip()
+    texto = resp.choices[0].message.content.strip()
+    return texto, _uso_openai_compatible(resp)
 
 
-async def _deepseek(modelo: str, prompt: str, temperature: float) -> str:
+async def _deepseek(modelo: str, prompt: str, temperature: float) -> tuple[str, dict | None]:
     from openai import AsyncOpenAI
     client = AsyncOpenAI(
         api_key=os.environ.get("DEEPSEEK_API_KEY", ""),
@@ -280,10 +335,11 @@ async def _deepseek(modelo: str, prompt: str, temperature: float) -> str:
         messages=[{"role": "user", "content": prompt}],
         temperature=temperature,
     )
-    return resp.choices[0].message.content.strip()
+    texto = resp.choices[0].message.content.strip()
+    return texto, _uso_openai_compatible(resp)
 
 
-async def _anthropic(modelo: str, prompt: str, temperature: float) -> str:
+async def _anthropic(modelo: str, prompt: str, temperature: float) -> tuple[str, dict | None]:
     import anthropic
     client = anthropic.AsyncAnthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
     msg    = await client.messages.create(
@@ -292,10 +348,19 @@ async def _anthropic(modelo: str, prompt: str, temperature: float) -> str:
         temperature=temperature,
         messages=[{"role": "user", "content": prompt}],
     )
-    return msg.content[0].text.strip()
+    texto = msg.content[0].text.strip()
+    uso   = None
+    try:
+        entrada = int(msg.usage.input_tokens or 0)
+        salida  = int(msg.usage.output_tokens or 0)
+        uso = {"tokens_entrada": entrada, "tokens_salida": salida,
+               "tokens_total": entrada + salida, "tokens_exactos": True}
+    except (AttributeError, TypeError):
+        pass
+    return texto, uso
 
 
-async def _groq(modelo: str, prompt: str, temperature: float) -> str:
+async def _groq(modelo: str, prompt: str, temperature: float) -> tuple[str, dict | None]:
     from groq import AsyncGroq
     client = AsyncGroq(api_key=os.environ.get("GROQ_API_KEY", ""))
     resp   = await client.chat.completions.create(
@@ -303,7 +368,23 @@ async def _groq(modelo: str, prompt: str, temperature: float) -> str:
         messages=[{"role": "user", "content": prompt}],
         temperature=min(temperature, 1.0),  # Groq max temp=1.0
     )
-    return resp.choices[0].message.content.strip()
+    texto = resp.choices[0].message.content.strip()
+    return texto, _uso_openai_compatible(resp)
+
+
+def _uso_openai_compatible(resp) -> dict | None:
+    """Extrae uso real de una respuesta con forma OpenAI (OpenAI/Groq/DeepSeek)."""
+    try:
+        u = resp.usage
+        if u is None:
+            return None
+        entrada = int(getattr(u, "prompt_tokens", 0) or 0)
+        salida  = int(getattr(u, "completion_tokens", 0) or 0)
+        total   = int(getattr(u, "total_tokens", entrada + salida) or entrada + salida)
+        return {"tokens_entrada": entrada, "tokens_salida": salida,
+                "tokens_total": total, "tokens_exactos": True}
+    except (AttributeError, TypeError):
+        return None
 
 
 # ── Implementaciones STREAMING por proveedor ──────────────────────────────────

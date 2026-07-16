@@ -1,9 +1,10 @@
 """
-core/metrics_prometheus.py — Métricas Prometheus (ADR-0014).
+core/metrics_prometheus.py — Métricas Prometheus (ADR-0014; FinOps IA
+extendido en Fase 19, ADR-0017).
 
-Expone contadores/histogramas de interacciones, tokens, duración y estado
-de los circuitos LLM — la base del endpoint GET /metrics para diagnosticar
-cuellos de botella sin depurar código.
+Expone contadores/histogramas de interacciones, tokens, costo USD estimado,
+duración y estado de los circuitos LLM — la base del endpoint GET /metrics
+para diagnosticar cuellos de botella y auditar gasto de IA sin depurar código.
 
 Best-effort: si `prometheus_client` no está instalado, todas las funciones
 degradan a no-ops (o a un payload de aviso en generar_exposicion) — nunca
@@ -31,9 +32,19 @@ if _DISPONIBLE:
         ["tipo", "exitoso"], registry=REGISTRO,
     )
     TOKENS_ESTIMADOS = Histogram(
-        "agentdesk_tokens_estimados", "Tokens estimados por interaccion (ADR-0007: chars/4)",
+        "agentdesk_tokens_estimados", "Tokens por interaccion (exactos del proveedor o chars/4)",
         ["agente_id"], registry=REGISTRO,
         buckets=(50, 100, 250, 500, 1000, 2000, 4000, 8000),
+    )
+    TOKENS_TOTAL = Counter(
+        "agentdesk_tokens_total",
+        "Tokens acumulados por proveedor, distinguiendo exactos de estimados (ADR-0017)",
+        ["proveedor", "exacto"], registry=REGISTRO,
+    )
+    COSTO_USD_TOTAL = Counter(
+        "agentdesk_costo_usd_total",
+        "Costo USD acumulado estimado por proveedor (tarifa aproximada, ADR-0017 — no es factura real)",
+        ["proveedor"], registry=REGISTRO,
     )
     DURACION_INTERACCION_S = Histogram(
         "agentdesk_interaccion_duracion_segundos", "Duracion total de una interaccion",
@@ -47,7 +58,9 @@ if _DISPONIBLE:
 
 
 def registrar_interaccion(tipo: str, exitoso: bool, agente_id: str,
-                          tokens: int = 0, duracion_s: float | None = None) -> None:
+                          tokens: int = 0, duracion_s: float | None = None,
+                          tokens_exactos: bool = False, costo_usd: float = 0.0,
+                          proveedor: str = "") -> None:
     """Best-effort: nunca debe romper la interacción que está midiendo."""
     if not _DISPONIBLE:
         return
@@ -55,6 +68,10 @@ def registrar_interaccion(tipo: str, exitoso: bool, agente_id: str,
         INTERACCIONES_TOTAL.labels(tipo=tipo or "desconocido", exitoso=str(bool(exitoso))).inc()
         if tokens:
             TOKENS_ESTIMADOS.labels(agente_id=agente_id or "desconocido").observe(tokens)
+            TOKENS_TOTAL.labels(proveedor=proveedor or "desconocido",
+                                exacto=str(bool(tokens_exactos))).inc(tokens)
+        if costo_usd:
+            COSTO_USD_TOTAL.labels(proveedor=proveedor or "desconocido").inc(costo_usd)
         if duracion_s is not None:
             DURACION_INTERACCION_S.labels(tipo=tipo or "desconocido").observe(duracion_s)
     except Exception as exc:
