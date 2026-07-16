@@ -150,34 +150,37 @@ class TestInteraccionCruzadaHATDelegacionAuditoria(unittest.IsolatedAsyncioTestC
             "delegación (fail-closed, ADR-0010)",
         )
 
-    async def test_04_contexto_hats_no_se_propaga_hoy_a_la_traza_de_delegacion(self):
+    async def test_04_contexto_hats_se_propaga_a_la_traza_de_delegacion(self):
         """
-        Hallazgo real de esta fase (documentado, NO corregido aquí — fuera
-        de alcance de Fase 17): DelegationService._auditar() (ADR-0011,
-        Fase 13) no recibe ni pasa contexto_hats a
-        audit_service.registrar_interaccion, a diferencia de
-        OrchestratorService._auditar() (ADR-0014, Fase 16), que sí lo hace
-        para chat/ejecutar_tarea directos.
-
-        El HAT de memoria SÍ opera correctamente dentro de la delegación
-        (test_01 lo prueba a nivel del prompt real que ve el LLM), pero ese
-        contexto recuperado no queda capturado en la columna contexto_hats
-        de auditoria_ia cuando la interacción llega vía delegación. Se dejó
-        documentado en vez de silenciarlo, para que no se asuma cerrado
-        solo porque ADR-0014 ya existe.
+        Fase 18 (ADR-0016): cierra la brecha documentada en la Fase 17.
+        DelegationService._auditar() ahora recibe y persiste contexto_hats
+        en el lado "resuelto" (el que efectivamente llama a chat_libre y
+        activa el HAT de memoria), igualando la capacidad que
+        OrchestratorService._auditar() (ADR-0014, Fase 16) ya tenía para
+        chat/ejecutar_tarea directos. El lado "delegado" (origen) sigue sin
+        contexto_hats propio -- quien delega no llama a chat_libre, no hay
+        memoria semántica que capturar de ese lado.
         """
         await self.svc.speak(
             "agente.finanzas", "agente.mantenimiento",
-            "torque del motor XJ-200", user_id="op.planta",
+            "recuerdame el torque del motor XJ-200", user_id="op.planta",
         )
+        origen   = audit_service.consultar(agente_id="agente.finanzas", user_id="op.planta", limit=10)
         destino  = audit_service.consultar(agente_id="agente.mantenimiento", user_id="op.planta", limit=10)
+        delegado = [t for t in origen  if t.get("tipo") == "delegacion" and t.get("contexto") == "delegado"]
         resuelto = [t for t in destino if t.get("tipo") == "delegacion" and t.get("contexto") == "resuelto"]
 
+        self.assertTrue(delegado)
         self.assertTrue(resuelto)
+        self.assertIn(
+            "45 nm", resuelto[0].get("contexto_hats", "").lower(),
+            "El contexto recuperado por ContextHarness debe quedar persistido "
+            "en auditoria_ia para el lado que resolvió la delegación",
+        )
         self.assertEqual(
-            resuelto[0].get("contexto_hats", ""), "",
-            "Si este assert empieza a fallar es buena noticia: alguien cerró la "
-            "brecha documentada en este test — actualizar el docstring y el ADR-0015.",
+            delegado[0].get("contexto_hats", ""), "",
+            "El lado que delega no ejecuta chat_libre -- no debe inventarse "
+            "contexto_hats que no existió",
         )
 
 

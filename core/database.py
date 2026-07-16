@@ -31,7 +31,6 @@ from sqlalchemy import (
     DateTime, Boolean, Text, event,
 )
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
-from sqlalchemy.pool import StaticPool
 
 
 class Base(DeclarativeBase):
@@ -462,17 +461,35 @@ def init_db(db_path: str | Path | None = None) -> None:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         db_url_efectiva = f"sqlite:///{db_path}"
 
+        # Fase 18 (ADR-0016), hallazgo real: StaticPool comparte UN SOLO
+        # objeto sqlite3.Connection entre TODOS los hilos. Bajo escritura
+        # concurrente real (tests/stress/test_db_concurrency.py) eso corrompe
+        # el estado del cursor entre hilos ("sqlite3.InterfaceError: bad
+        # parameter or other API misuse") -- no es un problema de locking,
+        # es reuso inseguro del mismo objeto Python desde varios hilos a la
+        # vez. Esta base es siempre un archivo real (nunca ":memory:", que
+        # ni siquiera esta soportado hoy -- ver el fallback a db_path=None
+        # arriba), asi que no hace falta compartir una conexion: el pool por
+        # defecto de SQLAlchemy le da a cada sesion su propia conexion real
+        # al mismo archivo, y SQLite coordina la concurrencia a nivel de
+        # archivo (WAL + busy_timeout), que es el mecanismo probado para esto.
         _engine = create_engine(
             db_url_efectiva,
             connect_args={"check_same_thread": False},
-            poolclass=StaticPool,
         )
 
-        # Habilitar WAL mode para mejor concurrencia
+        # Habilitar WAL mode para mejor concurrencia. busy_timeout: SQLite
+        # reporta "database is locked" DE INMEDIATO por defecto (timeout 0)
+        # cuando otra conexion ya tiene el lock de escritura -- con varios
+        # agentes escribiendo a la vez eso perdia escrituras reales en vez
+        # de esperar el turno. busy_timeout hace que cada conexion reintente
+        # hasta 5s antes de fallar, absorbiendo la contencion normal de N
+        # agentes escribiendo casi al mismo tiempo sin perder datos.
         @event.listens_for(_engine, "connect")
         def set_sqlite_pragma(conn, _):
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA foreign_keys=ON")
+            conn.execute("PRAGMA busy_timeout=5000")
 
     _aplicar_migraciones(db_url_efectiva)
     _Session = sessionmaker(bind=_engine, expire_on_commit=False)
