@@ -20,6 +20,7 @@ import asyncio
 import logging
 import os
 import sys
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -146,3 +147,109 @@ class SubprocessRunner:
         except Exception:
             pass
         return False
+
+
+@dataclass
+class DockerRunner:
+    """
+    Ejecutor de Grado Industrial (ADR-0011): corre un comando dentro de un
+    contenedor Docker EFÍMERO para aislamiento total del host — para
+    herramientas de origen no confiable (código generado, scripts subidos)
+    donde ni el entorno mínimo de SubprocessRunner alcanza.
+
+    Contenedor: --rm (se autodestruye), --network none (sin red), usuario
+    no-root (65534:65534), --cap-drop ALL, límites duros de CPU/RAM/PIDs,
+    filesystem de solo lectura con /tmp efímero para trabajo. NINGUNA
+    variable de entorno del host se propaga (no se usa -e en ningún caso).
+
+    Degrada con gracia: si el binario `docker` no está instalado, ejecutar()
+    lanza RuntimeError con un mensaje claro — nunca crashea el proceso host
+    ni cae en silencio a ejecución sin aislar.
+    """
+
+    timeout_s:      float = 30.0
+    max_memoria_mb: int   = 256
+    max_cpus:       float = 1.0
+    max_salida:     int   = 16_000
+    imagen:         str   = "python:3.13-slim"
+
+    @staticmethod
+    def disponible() -> bool:
+        import shutil
+        return shutil.which("docker") is not None
+
+    async def ejecutar(self, comando: list[str]) -> ResultadoSandbox:
+        if isinstance(comando, (str, bytes)):
+            raise ValueError("El comando debe ser una lista de argumentos (shell prohibida).")
+        if not comando:
+            raise ValueError("Comando vacío.")
+        if not self.disponible():
+            raise RuntimeError(
+                "DockerRunner no disponible: el binario 'docker' no está instalado o "
+                "no está en PATH. El sandbox Docker es opcional (ADR-0011) — usa "
+                "SubprocessRunner si no necesitas aislamiento a nivel de contenedor."
+            )
+
+        nombre_contenedor = f"agentdesk-sbx-{uuid.uuid4().hex[:12]}"
+        docker_cmd = [
+            "docker", "run",
+            "--rm",                                        # efímero
+            "--name", nombre_contenedor,
+            "--network", "none",                            # sin red
+            "--user", "65534:65534",                        # nobody — no-root
+            "--cap-drop", "ALL",
+            "--security-opt", "no-new-privileges",
+            "--pids-limit", "64",
+            "--memory", f"{self.max_memoria_mb}m",
+            "--memory-swap", f"{self.max_memoria_mb}m",     # sin swap adicional
+            "--cpus", str(self.max_cpus),
+            "--read-only",
+            "--tmpfs", "/tmp:rw,size=64m",  # nosec B108 - ruta DENTRO del contenedor, no del host
+            self.imagen,
+            *comando,
+        ]
+
+        loop = asyncio.get_running_loop()
+        t0   = loop.time()
+        proc = await asyncio.create_subprocess_exec(   # shell=False por diseño
+            *docker_cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            stdin=asyncio.subprocess.DEVNULL,
+        )
+
+        motivo_kill = ""
+        try:
+            stdout_b, stderr_b = await asyncio.wait_for(
+                proc.communicate(), timeout=self.timeout_s,
+            )
+        except asyncio.TimeoutError:
+            await self._matar_contenedor(nombre_contenedor)
+            proc.kill()
+            await proc.communicate()
+            stdout_b, stderr_b, motivo_kill = b"", b"", "timeout"
+
+        duracion  = round(loop.time() - t0, 3)
+        resultado = ResultadoSandbox(
+            ok=(proc.returncode == 0 and not motivo_kill),
+            exit_code=proc.returncode,
+            stdout=stdout_b.decode("utf-8", errors="replace")[: self.max_salida],
+            stderr=stderr_b.decode("utf-8", errors="replace")[: self.max_salida],
+            duracion_s=duracion,
+            motivo_kill=motivo_kill,
+        )
+        if motivo_kill:
+            logger.warning("SANDBOX-DOCKER: contenedor %s terminado por %s — dur=%.1fs",
+                           nombre_contenedor, motivo_kill, duracion)
+        return resultado
+
+    @staticmethod
+    async def _matar_contenedor(nombre: str) -> None:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "docker", "kill", nombre,
+                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+            )
+            await asyncio.wait_for(proc.wait(), timeout=5.0)
+        except Exception:
+            pass

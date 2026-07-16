@@ -17,6 +17,7 @@ Herramientas:
   obtener_energia_chile  → datos del mercado eléctrico chileno
   obtener_partidos       → resultados de fútbol de equipos/ligas
   listar_archivos        → muestra archivos disponibles del usuario
+  consultar_a_otro_agente → delega una subtarea a OTRO agente (ADR-0011)
 """
 from __future__ import annotations
 import ast
@@ -29,6 +30,18 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 
 _TAVILY_KEY = "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"
+
+# Referencia al orquestador vivo, inyectada al arrancar la API/CLI (mismo
+# patrón que core/scheduler.py: un global de módulo, sin importar la capa
+# api). La usa consultar_a_otro_agente (ADR-0011) para ubicar al agente
+# destino de una delegación.
+_orquestador_ref = None
+
+
+def set_orquestador(orquestador) -> None:
+    """Inyecta la referencia al orquestador vivo. Llamar al arrancar la API/CLI."""
+    global _orquestador_ref
+    _orquestador_ref = orquestador
 
 # ── Definiciones de herramientas (schema OpenAI-compatible) ───────────────────
 
@@ -268,6 +281,32 @@ TOOLS_SCHEMA = [
                     },
                 },
                 "required": ["consulta"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "consultar_a_otro_agente",
+            "description": (
+                "Delega una subtarea a OTRO agente del sistema y espera su respuesta. "
+                "Úsalo cuando la consulta necesita el conocimiento o el rol de un agente "
+                "distinto al tuyo (ej. un agente de Finanzas necesita un dato de "
+                "Mantenimiento). No lo uses para delegarte una tarea a ti mismo."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "agente_id": {
+                        "type": "string",
+                        "description": "ID del agente al que se delega la subtarea.",
+                    },
+                    "pregunta": {
+                        "type": "string",
+                        "description": "La subtarea o pregunta concreta a delegar.",
+                    },
+                },
+                "required": ["agente_id", "pregunta"],
             },
         },
     },
@@ -1100,10 +1139,27 @@ async def _obtener_pagina(url: str, max_chars: int = 8000) -> str:
 
 # ── Dispatcher: nombre → función ──────────────────────────────────────────────
 
-async def ejecutar_herramienta(nombre: str, argumentos: dict) -> str:
+async def _consultar_a_otro_agente(agente_id: str, pregunta: str, *,
+                                    origen_id: str = "", user_id: str = "anonimo") -> str:
+    """Delegación cognitiva (ADR-0011): pide ayuda a otro agente y retorna su respuesta."""
+    if _orquestador_ref is None:
+        return "Delegación no disponible: orquestador no inicializado."
+    from core.services.delegation_service import DelegationService
+    servicio = DelegationService(lambda: _orquestador_ref)
+    return await servicio.speak(origen_id or "desconocido", agente_id, pregunta,
+                                 user_id=user_id)
+
+
+async def ejecutar_herramienta(nombre: str, argumentos: dict, *,
+                                agente_id_clave: str = "", user_id: str = "anonimo") -> str:
     """Ejecuta una herramienta por nombre y devuelve el resultado como string."""
     logger.info("Tool call: %s(%s)", nombre, list(argumentos.keys()))
     try:
+        if nombre == "consultar_a_otro_agente":
+            return await _consultar_a_otro_agente(
+                argumentos["agente_id"], argumentos["pregunta"],
+                origen_id=agente_id_clave, user_id=user_id,
+            )
         if nombre == "buscar_web":
             return await _buscar_web(
                 query          = argumentos["query"],

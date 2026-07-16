@@ -325,6 +325,8 @@ async def _auto_iniciar_orquestador() -> None:
 
         registrar_bridge(bridge)
         registrar_orquestador(orch)
+        from core.tools import set_orquestador
+        set_orquestador(orch)   # ADR-0011: delegacion cognitiva Speak/Listen
         _tarea_cmds = asyncio.create_task(orch.procesar_comandos())
 
         logger.info(
