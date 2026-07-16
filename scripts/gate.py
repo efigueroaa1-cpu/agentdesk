@@ -79,11 +79,15 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # asyncpg (_verificar_conexion_async) antes de armar el engine sincrono
     # subio 580->584 (2026-07-15, ADR-0014): contexto_hats + guardrails_json
     # en AuditoriaIA (auditoria forense completa)
-    "core/database.py":                                                  584,
+    # subio 584->601 (2026-07-16, ADR-0016): comentario extenso documentando
+    # el hallazgo real de Fase 18 (StaticPool corrompia el cursor entre
+    # hilos bajo escritura concurrente real; retirado) + PRAGMA busy_timeout
+    "core/database.py":                                                  601,
     # gate.py mismo: crecio organicamente con cada fase (14 reglas nuevas
     # entre Fase 11 y 16). Se acepta el tamano del propio Guardian en vez
     # de partirlo artificialmente entre fases activas.
-    "scripts/gate.py":                                                   590,
+    # subio 590->642 (2026-07-16, ADR-0016): regla [BOOT-VALIDATION]
+    "scripts/gate.py":                                                   642,
     "dashboard.py":                                                     1257,
     "ui/dashboard.py":                                                  1257,
 }
@@ -242,6 +246,54 @@ def check_pesado_sincrono(archivos: list[str]) -> list[str]:
             if RE_PESADO.search(linea) and "ejecutar_pesado" not in linea and "encolar" not in linea:
                 errores.append(f"  [PESADO]  {rel}:{n}: {limpia[:80]}  "
                                f"<- logica pesada sincrona: usar queue_service (QueuePort)")
+    return errores
+
+
+# Diagnostico de Arranque Enterprise (Fase 18, ADR-0016): el chequeo
+# Fail-Hard solo protege al sistema si CORRE de verdad antes de levantar el
+# servidor. Un refactor futuro de main.py podria mover/borrar la llamada
+# sin que ningun test lo note (nada del arranque real corre en la suite de
+# tests). Esta regla exige que el punto de entrada real siga invocando el
+# servicio unificado.
+_RUTA_ENTRYPOINT = "main.py"
+
+
+def check_boot_validation() -> list[str]:
+    """
+    ADR-0016 [BOOT-VALIDATION]: main.py debe importar y llamar a
+    diagnostico_arranque_sistema() (core/services/boot_diagnostics_service.py)
+    Y el resultado debe seguir gobernando un sys.exit ante criticos — de lo
+    contrario el Fail-Hard queda "instalado" pero nunca se ejecuta.
+    """
+    errores = []
+    texto = "\n".join(leer(_RUTA_ENTRYPOINT))
+    if not texto.strip():
+        return [f"  [BOOT-VALIDATION] {_RUTA_ENTRYPOINT}: no se pudo leer el punto de entrada"]
+
+    tiene_import = bool(re.search(
+        r"from\s+core\.services\.boot_diagnostics_service\s+import\s+diagnostico_arranque_sistema",
+        texto,
+    ))
+    tiene_llamada = bool(re.search(r"\bdiagnostico_arranque_sistema\s*\(", texto))
+    tiene_fail_hard = bool(re.search(r'\["criticos"\]', texto)) and "sys.exit" in texto
+
+    if not tiene_import:
+        errores.append(
+            f"  [BOOT-VALIDATION] {_RUTA_ENTRYPOINT}: no importa "
+            f"diagnostico_arranque_sistema desde boot_diagnostics_service "
+            f"-> el Fail-Hard de ADR-0016 no esta conectado al arranque real"
+        )
+    if not tiene_llamada:
+        errores.append(
+            f"  [BOOT-VALIDATION] {_RUTA_ENTRYPOINT}: diagnostico_arranque_sistema() "
+            f"nunca se invoca -> declarado pero no ejecutado"
+        )
+    if tiene_import and tiene_llamada and not tiene_fail_hard:
+        errores.append(
+            f"  [BOOT-VALIDATION] {_RUTA_ENTRYPOINT}: se invoca el diagnostico pero "
+            f"no se ve un sys.exit gobernado por sus 'criticos' -> el resultado "
+            f"se calcula y se ignora, no es Fail-Hard de verdad"
+        )
     return errores
 
 
@@ -551,6 +603,7 @@ def main() -> int:
     errores += check_ejecucion_peligrosa(archivos)
     errores += check_credenciales_defecto(archivos)
     errores += check_pesado_sincrono(archivos)
+    errores += check_boot_validation()
     errores += check_tests_adaptadores(archivos)
     errores += check_bandit()
     errores += check_contrato_auth()

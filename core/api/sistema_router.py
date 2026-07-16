@@ -112,6 +112,26 @@ async def diagnostico_tracing(limit: int = 100) -> dict:
     return {"spans": spans_recientes(limit)}
 
 
+@router.get("/diagnostico/arranque")
+async def diagnostico_arranque(req: Request) -> dict:
+    """
+    Diagnóstico de Arranque Enterprise (ADR-0016), re-evaluado en vivo.
+
+    Si el sistema está corriendo, ya pasó el chequeo Fail-Hard de main.py
+    (criticos == [] en el momento del arranque) — esto expone la foto
+    ACTUAL para que la UI muestre modo_configuracion/avisos sin tener que
+    leer el log del proceso. Revela solo mensajes y booleanos, nunca los
+    valores de los secretos evaluados. Requiere rol supervisor o admin,
+    igual que /auditoria/* — es información sobre la postura de seguridad
+    del sistema, no debe ser pública.
+    """
+    from core.auth import tiene_permiso
+    if not tiene_permiso(getattr(req.state, "rol", "viewer"), "supervisor"):
+        raise HTTPException(403, detail="Se requiere rol supervisor o admin.")
+    from core.services.boot_diagnostics_service import diagnostico_arranque_sistema
+    return diagnostico_arranque_sistema()
+
+
 @router.get("/metrics")
 async def metricas_prometheus():
     """Métricas en formato Prometheus (ADR-0014): interacciones, tokens, duración, circuitos LLM."""

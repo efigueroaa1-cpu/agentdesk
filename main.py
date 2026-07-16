@@ -295,12 +295,15 @@ if __name__ == "__main__":
             sys.exit(78)   # EX_CONFIG — desactivado por configuración
         # _estado_ks is None → Gist inalcanzable → fail-open (arrancar igual)
 
-        # ── Chequeo de salud inicial (Fail-Hard, ADR-0008) ────────────────────
-        # Secreto JWT débil/por defecto = instalación manipulada → NO arrancar.
-        # Sin credenciales posibles (ni usuarios ni MASTER_PASSWORD_HASH) →
-        # arrancar degradado a modo configuración con aviso claro.
-        from core.auth import diagnostico_arranque
-        _salud = diagnostico_arranque()
+        # ── Chequeo de salud inicial (Fail-Hard, ADR-0008/ADR-0016) ───────────
+        # Secreto JWT débil/por defecto, o AGENTDESK_DB_URL con credenciales
+        # por defecto = instalación manipulada → NO arrancar (Fail-Hard,
+        # politica Zero-Default). Sin credenciales posibles (ni usuarios ni
+        # MASTER_PASSWORD_HASH) → arrancar degradado a modo configuración.
+        # BOOT-VALIDATION (Fase 18): este es el ÚNICO punto de invocación del
+        # Diagnóstico de Arranque Enterprise — scripts/gate.py lo exige.
+        from core.services.boot_diagnostics_service import diagnostico_arranque_sistema
+        _salud = diagnostico_arranque_sistema()
         if _salud["criticos"]:
             print("=" * 72, file=sys.stderr)
             print("[SEGURIDAD] AgentDesk se niega a arrancar:", file=sys.stderr)

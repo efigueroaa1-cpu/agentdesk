@@ -12,6 +12,16 @@ Freno estructural contra ciclos: el agente delegado responde vía
 herramienta `consultar_a_otro_agente` — estructuralmente no puede volver a
 delegar. No hace falta un contador de profundidad: la propia superficie de
 herramientas disponibles ya lo impide.
+
+Fase 18 (ADR-0016): `listen()` ahora propaga `contexto_hats` a la traza del
+lado "resuelto" -- el mismo canal lateral `AgentBase.ultimo_contexto_hats`
+(ADR-0014) que ya usa `OrchestratorService._auditar()` para chat/tarea
+directos. Antes de esta fase, la memoria HAT operaba correctamente dentro
+de una delegación (el prompt real la recibía) pero ese contexto recuperado
+se descartaba al auditar -- hallazgo documentado en
+`tests/integration/test_cross_systems.py` (Fase 17) y cerrado aquí. El lado
+"delegado" (origen) no tiene contexto_hats propio -- quien delega no llama
+a `chat_libre`, así que no hay memoria semántica que capturar de ese lado.
 """
 from __future__ import annotations
 
@@ -62,15 +72,21 @@ class DelegationService:
         respuesta = await agente.chat_libre(
             mensaje, sesion_id=sesion_delegada, agente_id_clave=destino_id, user_id=user_id,
         )
+        # ADR-0016: canal lateral poblado por chat_libre -> _contexto_harnesses()
+        # (ADR-0014). getattr defensivo: agente puede ser un doble de test sin
+        # el atributo, mismo patron que orchestrator_service.py (Fase 16).
+        contexto_hats = getattr(agente, "ultimo_contexto_hats", "") or ""
         self._auditar(destino_id, "resuelto", f"[delegado por {origen_id}] {mensaje}",
-                       respuesta, user_id)
+                       respuesta, user_id, contexto_hats=contexto_hats)
         return respuesta
 
     @staticmethod
-    def _auditar(agente_id: str, tipo: str, prompt: str, respuesta: str, user_id: str) -> None:
-        """Traza forense best-effort de CADA lado de la delegación (ADR-0007/0011)."""
+    def _auditar(agente_id: str, tipo: str, prompt: str, respuesta: str, user_id: str,
+                  contexto_hats: str = "") -> None:
+        """Traza forense best-effort de CADA lado de la delegación (ADR-0007/0011/0016)."""
         from core.services.audit_service import registrar_interaccion
         registrar_interaccion(
             tipo="delegacion", agente_id=agente_id, prompt=prompt, respuesta=respuesta,
-            user_id=user_id, contexto=tipo, veredicto_guardrail="no_aplica",
+            user_id=user_id, contexto=tipo, contexto_hats=contexto_hats,
+            veredicto_guardrail="no_aplica",
         )
