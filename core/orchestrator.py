@@ -56,6 +56,11 @@ class AgentBase:
         self.siguiente_agente_id = config.get("siguiente_agente_id", None)
         # HATs (ADR-0009): capacidades componibles atachadas por config.
         self.harnesses = list(config.get("harnesses", []))
+        # Ultimo contexto de HATs inyectado (ADR-0014): canal lateral de
+        # solo lectura para que orchestrator_service audite el contexto
+        # RECUPERADO, no solo el mensaje del usuario, sin cambiar la firma
+        # de retorno de los metodos de chat.
+        self.ultimo_contexto_hats = ""
 
     def reload_config(self, config: dict) -> bool:
         """
@@ -136,14 +141,17 @@ class AgentBase:
                                    user_id: str = "anonimo") -> str:
         """Contexto extra best-effort de los HATs configurados (ADR-0009/0010)."""
         if not self.harnesses:
+            self.ultimo_contexto_hats = ""
             return ""
         try:
             from core.services.harness_service import harness_service
             extra = await harness_service.aplicar_pre(
                 self.harnesses, agente_id_clave or self.nombre, mensaje, user_id=user_id,
             )
+            self.ultimo_contexto_hats = extra or ""
             return f"\n\n{extra}\n" if extra else ""
         except Exception as exc:
+            self.ultimo_contexto_hats = ""
             logger.warning("HATs: contexto no aplicado para '%s' (%s)",
                            self.nombre, exc, extra={"agente": self.nombre})
             return ""
@@ -206,8 +214,10 @@ class AgentBase:
         )
 
         # 4. Generar respuesta
+        from core.telemetry_otel import medir_paso
         try:
-            respuesta = await _gen(self.modelo, prompt, self.temperatura)
+            with medir_paso("llm.generar", agente=self.nombre, modelo=self.modelo):
+                respuesta = await _gen(self.modelo, prompt, self.temperatura)
         except Exception as exc:
             msg = str(exc)
             es_429 = "429" in msg or "RESOURCE_EXHAUSTED" in msg or "quota" in msg.lower()
@@ -222,7 +232,8 @@ class AgentBase:
             if es_503:
                 await _asyncio.sleep(5)
                 try:
-                    respuesta = await _gen(self.modelo, prompt, self.temperatura)
+                    with medir_paso("llm.generar.reintento", agente=self.nombre, modelo=self.modelo):
+                        respuesta = await _gen(self.modelo, prompt, self.temperatura)
                 except Exception:
                     return "Servicio temporalmente saturado. Intenta de nuevo en unos segundos."
             else:

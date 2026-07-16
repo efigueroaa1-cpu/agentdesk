@@ -122,7 +122,8 @@ class OrchestratorService:
                                         "Abortado por guardrails")
                 self._auditar(user_id, agente_id, "tarea", tarea, "",
                               "abortado_guardrails", duracion_s, False,
-                              contexto=f"archivo_id={archivo_id or '-'}")
+                              contexto=f"archivo_id={archivo_id or '-'}",
+                              guardrails=list(getattr(getattr(agente, "pipeline", None), "ultimo_veredicto", []) or []))
                 return {"ok": False, "agente_id": agente_id,
                         "motivo": "Pipeline abortado por guardrails. Ve a Pipeline -> Feed de Errores para ver el detalle."}
 
@@ -153,7 +154,8 @@ class OrchestratorService:
                           resultado.get("resumen", "") if resultado else "",
                           "aprobado", duracion_s, True,
                           contexto=f"archivo_id={archivo_id or '-'}",
-                          modelo=getattr(agente, "modelo", ""))
+                          modelo=getattr(agente, "modelo", ""),
+                          guardrails=list(getattr(getattr(agente, "pipeline", None), "ultimo_veredicto", []) or []))
             return {"ok": True, "agente_id": agente_id,
                     "agente_nombre": agente_nombre, "resultado": resultado}
 
@@ -168,14 +170,14 @@ class OrchestratorService:
     @staticmethod
     def _auditar(user_id, agente_id, tipo, prompt, respuesta, veredicto,
                  duracion_s, exitoso, contexto="", modelo="",
-                 herramientas=None) -> None:
-        """Traza forense best-effort (ADR-0007): nunca rompe la interacción."""
+                 herramientas=None, contexto_hats="", guardrails=None) -> None:
+        """Traza forense best-effort (ADR-0007/0014): nunca rompe la interacción."""
         from core.services.audit_service import registrar_interaccion
         registrar_interaccion(
             tipo=tipo, agente_id=agente_id, prompt=prompt, respuesta=respuesta,
-            user_id=user_id, contexto=contexto, modelo=modelo,
+            user_id=user_id, contexto=contexto, contexto_hats=contexto_hats, modelo=modelo,
             herramientas=herramientas or [], veredicto_guardrail=veredicto,
-            duracion_s=duracion_s, exitoso=exitoso,
+            guardrails=guardrails or [], duracion_s=duracion_s, exitoso=exitoso,
         )
 
     @staticmethod
@@ -252,7 +254,8 @@ class OrchestratorService:
                       "no_aplica", round(time.monotonic() - _t0, 3), True,
                       contexto=f"sesion={sesion_id} archivo_id={archivo_id or '-'}",
                       modelo=getattr(agente, "modelo", ""),
-                      herramientas=herramientas_usadas)
+                      herramientas=herramientas_usadas,
+                      contexto_hats=getattr(agente, "ultimo_contexto_hats", ""))
         return {"respuesta": respuesta, "agente_id": agente_key,
                 "agente_nombre": agente.nombre, "agente_area": agente.area}
 
@@ -313,7 +316,8 @@ class OrchestratorService:
                           texto_completo, "no_aplica",
                           round(time.monotonic() - _t0, 3), bool(texto_completo),
                           contexto=f"sesion={sesion_id} archivo_id={archivo_id or '-'}",
-                          modelo=getattr(agente, "modelo", ""))
+                          modelo=getattr(agente, "modelo", ""),
+                          contexto_hats=getattr(agente, "ultimo_contexto_hats", ""))
             yield {"tipo": "fin", "texto_completo": texto_completo}
 
     # ── Control remoto (webhook ya autenticado) ───────────────────────────

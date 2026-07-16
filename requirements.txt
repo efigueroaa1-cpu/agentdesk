@@ -32,6 +32,11 @@ openpyxl>=3.1
 rich>=15.0
 python-dotenv>=1.2
 
+# ── Observabilidad (ADR-0014: tracing OTEL + metricas Prometheus) ─────────
+opentelemetry-api>=1.43
+opentelemetry-sdk>=1.43
+prometheus-client>=0.25
+
 # ── Calidad y gate (desarrollo) ───────────────────────────────────────────
 bandit>=1.9.4
 
