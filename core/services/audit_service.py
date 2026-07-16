@@ -1,6 +1,6 @@
 """
 core/services/audit_service.py — Motor de Auditoría Forense IA (ADR-0007/0014;
-FinOps IA extendido en Fase 19, ADR-0017).
+FinOps IA extendido en Fase 19, ADR-0017; retención y purga en Fase 20, ADR-0018).
 
 Ante la infalibilidad imposible: observabilidad total. Cada interacción de
 agente (entrada, contexto RECUPERADO por los HATs, modelo, herramientas,
@@ -23,16 +23,51 @@ Principios:
   - Higiene de PII (ADR-0014): el user_id real se guarda en la DB (RBAC y
     aislamiento de memoria de HATs, ADR-0010, lo necesitan tal cual) pero
     NUNCA en texto plano en los logs de aplicación — ahí solo su hash.
+  - Retención (Fase 20, ADR-0018): auditoría total no significa auditoría
+    ETERNA — en sectores regulados la retención indefinida de PII es, ella
+    misma, un riesgo de cumplimiento. `purgar_registros_antiguos()` anonimiza
+    (no borra la fila -- la traza de "que paso" sigue existiendo para
+    conteo/series historicas) las filas mas viejas que N dias, configurable
+    via `AGENTDESK_AUDITORIA_RETENCION_DIAS`.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json as _json
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
 MAX_TEXTO = 4000   # caracteres conservados de prompt/respuesta/contexto_hats
+
+# Retencion de auditoria (Fase 20, ADR-0018): dias que una fila conserva su
+# contenido en claro antes de ser anonimizada. Zero-Default (ADR-0016): la
+# AUSENCIA de configuracion es valida (usa este default razonable para
+# sectores regulados); lo que se rechaza es un valor invalido, no la ausencia.
+RETENCION_DIAS_DEFECTO = 365
+
+
+def _retencion_dias_configurada() -> int:
+    valor = os.environ.get("AGENTDESK_AUDITORIA_RETENCION_DIAS", "")
+    if not valor:
+        return RETENCION_DIAS_DEFECTO
+    try:
+        dias = int(valor)
+    except ValueError:
+        logger.warning(
+            "AUDITORIA_SEGURIDAD: AGENTDESK_AUDITORIA_RETENCION_DIAS=%r invalido "
+            "(no es entero) — usando default %d dias", valor, RETENCION_DIAS_DEFECTO,
+        )
+        return RETENCION_DIAS_DEFECTO
+    if dias <= 0:
+        logger.warning(
+            "AUDITORIA_SEGURIDAD: AGENTDESK_AUDITORIA_RETENCION_DIAS=%d invalido "
+            "(debe ser > 0) — usando default %d dias", dias, RETENCION_DIAS_DEFECTO,
+        )
+        return RETENCION_DIAS_DEFECTO
+    return dias
 
 # Precios aproximados en USD por 1000 tokens (Fase 19, ADR-0017). Tarifa
 # COMBINADA entrada+salida a modo de estimación de tablero: los precios
@@ -192,3 +227,81 @@ def resumen_costos(limit_dias: int = 30) -> dict:
         d["costo_usd"] = round(d["costo_usd"], 6)
     return {"dias": limit_dias, "total": len(filas),
             "costo_usd_total": round(costo_usd_total, 6), "por_agente": por_agente}
+
+
+_ANONIMIZADO = "[purgado por retencion]"
+
+
+def purgar_registros_antiguos(dias: int | None = None) -> int:
+    """
+    Política de retención (Fase 20, ADR-0018): ANONIMIZA (no borra la fila)
+    las trazas de auditoría más viejas que `dias` (o el configurado via
+    AGENTDESK_AUDITORIA_RETENCION_DIAS si no se pasa explícito).
+
+    Anonimizar en vez de DELETE es deliberado: la fila y sus columnas
+    numéricas (tokens, costo_usd, veredicto_guardrail, duracion_s, ts)
+    siguen existiendo para series históricas de FinOps/SLO — lo que se
+    purga es el contenido con PII/texto libre (prompt, respuesta, contexto,
+    contexto_hats, user_id real). Esto también es lo que hace que la purga
+    NO pueda "corromper" la base: nunca cambia el conteo de filas ni el
+    schema, solo el contenido de columnas ya existentes — verificable
+    comparando `SELECT COUNT(*)` antes/después.
+
+    Retorna el número de filas anonimizadas (0 si no había ninguna vieja,
+    nunca lanza — best-effort, igual que el resto de este módulo).
+    """
+    from datetime import timedelta
+    from core.database import AuditoriaIA, get_session
+    from core.timeutil import utcnow
+
+    dias_efectivos = dias if dias is not None else _retencion_dias_configurada()
+    corte = utcnow() - timedelta(days=dias_efectivos)
+    try:
+        with get_session() as s:
+            filas = (
+                s.query(AuditoriaIA)
+                .filter(AuditoriaIA.ts < corte)
+                .filter(AuditoriaIA.user_id != _ANONIMIZADO[:64])
+                .all()
+            )
+            for fila in filas:
+                fila.user_id       = _ANONIMIZADO[:64]
+                fila.prompt         = _ANONIMIZADO
+                fila.respuesta      = _ANONIMIZADO
+                fila.contexto       = _ANONIMIZADO
+                fila.contexto_hats  = _ANONIMIZADO
+                fila.herramientas_json = "[]"
+                fila.guardrails_json   = "[]"
+            s.commit()
+            n = len(filas)
+    except Exception as exc:
+        logger.error("AUDITORIA_SEGURIDAD: purga de retencion fallo (%s)", exc)
+        return 0
+
+    if n:
+        logger.warning(
+            "AUDITORIA_SEGURIDAD: purga de retencion anonimizo %d fila(s) "
+            "anteriores a %s (retencion=%d dias)", n, corte.isoformat(), dias_efectivos,
+        )
+    return n
+
+
+INTERVALO_PURGA_S = 24 * 3600.0   # una vez al dia alcanza para una politica de retencion en dias
+
+
+async def iniciar_monitor_purga(intervalo_s: float = INTERVALO_PURGA_S) -> None:
+    """
+    Loop de fondo (mismo patrón que `alert_service.iniciar_monitor()` y
+    `kill_switch.iniciar_monitor()`): corre `purgar_registros_antiguos()`
+    periódicamente hasta que la tarea se cancele. Registrado como
+    `asyncio.create_task()` en `core/api/__init__.py::startup()`.
+    """
+    while True:
+        try:
+            purgar_registros_antiguos()
+        except Exception as exc:
+            logger.warning("AUDITORIA_SEGURIDAD: ciclo de purga fallo (%s)", exc)
+        try:
+            await asyncio.sleep(intervalo_s)
+        except asyncio.CancelledError:
+            break

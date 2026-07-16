@@ -75,9 +75,13 @@ manager = ConnectionManager()
 # _bridge        : inyectado desde main.py O auto-inicializado en startup.
 # _tarea_monitor : tarea background del kill switch (cancelada en shutdown).
 # _tarea_cmds    : tarea background del CommandBridge (cancelada en shutdown).
+# _tarea_alertas : tarea background de alert_service (Fase 20, ADR-0018).
+# _tarea_purga   : tarea background de purga de retencion (Fase 20, ADR-0018).
 _bridge:        CommandBridge | None = None
 _tarea_monitor: asyncio.Task | None  = None
 _tarea_cmds:    asyncio.Task | None  = None
+_tarea_alertas: asyncio.Task | None  = None
+_tarea_purga:   asyncio.Task | None  = None
 _orquestador:   object | None        = None   # Orquestador (tipado como object para evitar import circular)
 
 # Servicio de gestión de agentes (hexagonal): los lambdas leen los globals de

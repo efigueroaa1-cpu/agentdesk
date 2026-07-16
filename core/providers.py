@@ -12,6 +12,9 @@ Formato de model_id:
   "anthropic:claude-3-haiku-20240307"    → Claude Haiku (barato)
   "groq:llama-3.3-70b-versatile"    → Groq/LLaMA (MUY rápido y GRATUITO)
   "groq:mixtral-8x7b-32768"         → Groq/Mixtral
+  "ollama:llama3.2"                 → Ollama local (Soberanía de Datos, ADR-0018)
+  "ollama:mistral"                  → LM Studio / cualquier servidor local
+                                       compatible con la API de OpenAI
 
 Env vars necesarias por proveedor:
   GEMINI_API_KEY    → ya configurada
@@ -19,6 +22,11 @@ Env vars necesarias por proveedor:
   DEEPSEEK_API_KEY  → DeepSeek (formato compatible OpenAI)
   ANTHROPIC_API_KEY → Claude
   GROQ_API_KEY      → Groq (tier gratuito muy generoso)
+  AGENTDESK_OLLAMA_BASE_URL → Ollama/LM Studio (ADR-0018). Opcional: por
+                              defecto http://localhost:11434/v1 (Ollama).
+                              Sin API key real — el servidor local no la
+                              exige, pero el SDK de OpenAI requiere enviar
+                              alguna cadena no vacía.
 """
 
 from __future__ import annotations
@@ -56,10 +64,24 @@ CATALOGO: dict[str, list[dict]] = {
         {"id": "groq:mixtral-8x7b-32768",             "nombre": "Mixtral 8x7B (Groq)",      "costo": "gratis", "velocidad": "rápido"},
         {"id": "groq:gemma2-9b-it",                   "nombre": "Gemma2 9B (Groq)",         "costo": "gratis", "velocidad": "rápido"},
     ],
+    "ollama": [
+        # Catálogo orientativo — los modelos REALMENTE disponibles dependen
+        # de lo que el usuario haya descargado en su servidor local
+        # (`ollama pull <modelo>`). No hay forma de listarlos sin consultar
+        # el servidor en vivo; esta lista es solo para el selector de la UI.
+        {"id": "ollama:llama3.2",                     "nombre": "Llama 3.2 (Ollama local)", "costo": "gratis", "velocidad": "depende del hardware"},
+        {"id": "ollama:mistral",                      "nombre": "Mistral (Ollama local)",   "costo": "gratis", "velocidad": "depende del hardware"},
+        {"id": "ollama:qwen2.5",                      "nombre": "Qwen 2.5 (Ollama local)",  "costo": "gratis", "velocidad": "depende del hardware"},
+    ],
     "mock": [
         {"id": "mock:agentdesk-demo",                 "nombre": "Mock Determinista (Demo)", "costo": "gratis", "velocidad": "instantáneo"},
     ],
 }
+
+# Ollama/LM Studio (ADR-0018): servidor LOCAL compatible con la API de
+# OpenAI. Sin este puerto no hay soberanía de datos real posible -- CUALQUIER
+# otro proveedor de la cadena sale a internet.
+OLLAMA_BASE_URL_DEFECTO = "http://localhost:11434/v1"
 
 
 # ── MockProvider: Modo Demo / Dry-Run (soberanía de ejecución) ─────────────────
@@ -155,6 +177,13 @@ def proveedores_configurados() -> dict[str, bool]:
         "deepseek":  bool(os.environ.get("DEEPSEEK_API_KEY")),
         "anthropic": bool(os.environ.get("ANTHROPIC_API_KEY")),
         "groq":      bool(os.environ.get("GROQ_API_KEY")),
+        # Ollama (ADR-0018) no exige API key -- el servidor local decide si
+        # responde o no. Se marca "configurado" siempre (URL por defecto
+        # sin variable), consistente con la politica Zero-Default (ADR-0016):
+        # AUSENCIA de configuracion es un estado valido, no un bloqueo. Si el
+        # servidor local no esta corriendo, la llamada real falla y la
+        # cadena de resiliencia (ADR-0017) sigue al siguiente eslabon.
+        "ollama":    True,
         "mock":      modo_mock_activo(),
     }
 
@@ -201,6 +230,9 @@ async def generate_stream(model_id: str, prompt: str,
             yield chunk
     elif proveedor == "groq":
         async for chunk in _groq_stream(modelo, prompt, temperature):
+            yield chunk
+    elif proveedor == "ollama":
+        async for chunk in _ollama_stream(modelo, prompt, temperature):
             yield chunk
     else:
         raise ValueError(f"Proveedor desconocido: {proveedor!r}")
@@ -258,6 +290,7 @@ async def generate_con_uso(model_id: str, prompt: str, temperature: float = 0.4,
         "deepseek":  _deepseek,
         "anthropic": _anthropic,
         "groq":      _groq,
+        "ollama":    _ollama,
     }
     fn = _fn_map.get(proveedor)
     if fn is None:
@@ -367,6 +400,29 @@ async def _groq(modelo: str, prompt: str, temperature: float) -> tuple[str, dict
         model=modelo,
         messages=[{"role": "user", "content": prompt}],
         temperature=min(temperature, 1.0),  # Groq max temp=1.0
+    )
+    texto = resp.choices[0].message.content.strip()
+    return texto, _uso_openai_compatible(resp)
+
+
+async def _ollama(modelo: str, prompt: str, temperature: float) -> tuple[str, dict | None]:
+    """
+    Ollama / LM Studio (ADR-0018, Soberanía de Datos): servidor LOCAL
+    compatible con la API de OpenAI — mismo patrón que _deepseek(), solo
+    cambia base_url. Sin internet: si el servidor local no está corriendo,
+    la conexión falla como cualquier otro proveedor caído y la cadena de
+    resiliencia (ADR-0017) sigue al siguiente eslabón (mock).
+    """
+    from openai import AsyncOpenAI
+    base_url = os.environ.get("AGENTDESK_OLLAMA_BASE_URL", OLLAMA_BASE_URL_DEFECTO)
+    client = AsyncOpenAI(
+        api_key=os.environ.get("AGENTDESK_OLLAMA_API_KEY", "ollama"),  # el servidor local no la valida
+        base_url=base_url,
+    )
+    resp = await client.chat.completions.create(
+        model=modelo,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=temperature,
     )
     texto = resp.choices[0].message.content.strip()
     return texto, _uso_openai_compatible(resp)
@@ -490,6 +546,26 @@ async def _deepseek_stream(modelo: str, prompt: str, temperature: float):
     client = AsyncOpenAI(
         api_key=os.environ.get("DEEPSEEK_API_KEY", ""),
         base_url="https://api.deepseek.com",
+    )
+    stream = await client.chat.completions.create(
+        model=modelo,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=temperature,
+        stream=True,
+    )
+    async for chunk in stream:
+        delta = chunk.choices[0].delta.content
+        if delta:
+            yield delta
+
+
+async def _ollama_stream(modelo: str, prompt: str, temperature: float):
+    """Ollama / LM Studio en streaming (ADR-0018) — mismo patrón que _deepseek_stream()."""
+    from openai import AsyncOpenAI
+    base_url = os.environ.get("AGENTDESK_OLLAMA_BASE_URL", OLLAMA_BASE_URL_DEFECTO)
+    client = AsyncOpenAI(
+        api_key=os.environ.get("AGENTDESK_OLLAMA_API_KEY", "ollama"),
+        base_url=base_url,
     )
     stream = await client.chat.completions.create(
         model=modelo,

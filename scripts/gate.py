@@ -94,14 +94,17 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # entre Fase 11 y 16). Se acepta el tamano del propio Guardian en vez
     # de partirlo artificialmente entre fases activas.
     # subio 590->642 (2026-07-16, ADR-0016): regla [BOOT-VALIDATION]
-    # subio 642->? (2026-07-16, ADR-0017): regla [LLM-RESILIENCE]
-    "scripts/gate.py":                                                   700,
+    # subio 642->700 (2026-07-16, ADR-0017): regla [LLM-RESILIENCE]
+    # subio 700->748 (2026-07-16, ADR-0018): regla [DATA-HYGIENE]
+    "scripts/gate.py":                                                   748,
     "dashboard.py":                                                     1257,
     "ui/dashboard.py":                                                  1257,
     # providers.py subio de <500 a 528 (2026-07-16, ADR-0017): generate_con_uso()
     # + extraccion de tokens reales (usage) por cada uno de los 5 proveedores
     # (Gemini/OpenAI/DeepSeek/Anthropic/Groq) para la auditoria FinOps
-    "core/providers.py":                                                 528,
+    # subio 528->604 (2026-07-16, ADR-0018): adaptador Ollama/LM Studio
+    # (_ollama/_ollama_stream, OpenAI-compatible local) para soberania de datos
+    "core/providers.py":                                                 604,
 }
 
 # Reglas de capas (ADR-0002/0004): prefijo de carpeta -> imports prohibidos.
@@ -351,6 +354,50 @@ def check_llm_resilience(archivos: list[str]) -> list[str]:
                     f"<- llamada al LLM sin circuit breaker: usar "
                     f"llm_service.generar() (core/services/llm_service.py)"
                 )
+    return errores
+
+
+# Higiene de datos (Fase 20, ADR-0018): la politica de retencion/purga solo
+# protege la privacidad de sectores regulados si CORRE de verdad en el
+# arranque real -- mismo patron de riesgo que [BOOT-VALIDATION]: declarar
+# purgar_registros_antiguos()/iniciar_monitor_purga() sin registrarlas como
+# tarea de fondo del servidor real las deja "instaladas" pero inertes.
+_RUTA_STARTUP_API = "core/api/__init__.py"
+
+
+def check_data_hygiene() -> list[str]:
+    """
+    ADR-0018 [DATA-HYGIENE]: core/api/__init__.py debe importar y arrancar
+    el monitor de purga de retencion (audit_service.iniciar_monitor_purga)
+    como tarea de fondo real del servidor -- no solo debe existir la
+    funcion en audit_service.py.
+    """
+    errores = []
+    texto = "\n".join(leer(_RUTA_STARTUP_API))
+    if not texto.strip():
+        return [f"  [DATA-HYGIENE] {_RUTA_STARTUP_API}: no se pudo leer el arranque del servidor"]
+
+    tiene_import = bool(re.search(
+        r"from\s+core\.services\.audit_service\s+import\s+iniciar_monitor_purga",
+        texto,
+    ))
+    tiene_tarea = bool(re.search(
+        r"asyncio\.create_task\s*\(\s*_?iniciar_monitor_purga\s*\(",
+        texto,
+    ))
+
+    if not tiene_import:
+        errores.append(
+            f"  [DATA-HYGIENE] {_RUTA_STARTUP_API}: no importa "
+            f"iniciar_monitor_purga desde audit_service -> la politica de "
+            f"retencion de ADR-0018 no esta conectada al arranque real"
+        )
+    if not tiene_tarea:
+        errores.append(
+            f"  [DATA-HYGIENE] {_RUTA_STARTUP_API}: iniciar_monitor_purga() "
+            f"nunca se arranca como asyncio.create_task -> declarado pero "
+            f"no ejecutado en background"
+        )
     return errores
 
 
@@ -662,6 +709,7 @@ def main() -> int:
     errores += check_pesado_sincrono(archivos)
     errores += check_boot_validation()
     errores += check_llm_resilience(archivos)
+    errores += check_data_hygiene()
     errores += check_tests_adaptadores(archivos)
     errores += check_bandit()
     errores += check_contrato_auth()
