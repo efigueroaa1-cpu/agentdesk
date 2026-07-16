@@ -1,10 +1,16 @@
 """
-core/database.py — Capa de persistencia con SQLAlchemy (modo dual, ADR-0005).
+core/database.py — Capa de persistencia con SQLAlchemy (modo dual, ADR-0005/0013).
 
 Motores:
-  SQLite (defecto)  — desarrollo y escritorio mono-usuario (WAL habilitado).
+  SQLite (defecto)  — desarrollo y escritorio mono-usuario, zero-config
+                      (WAL habilitado).
   PostgreSQL        — planta con alta telemetría/concurrencia, activado con
                       AGENTDESK_DB_URL=postgresql+psycopg2://user:pass@host/db
+
+Esquema (ADR-0013): gobernado por Alembic (migrations/), no por
+Base.metadata.create_all() ciego — cambios reproducibles e incrementales
+entre el instalador de escritorio y una base de producción. create_all()
+sigue como respaldo best-effort si Alembic no está disponible.
 
 Tablas:
   ejecuciones      — historial de tareas ejecutadas por agente
@@ -13,6 +19,7 @@ Tablas:
   monitor_alertas  — alertas generadas por cambios significativos
 """
 from __future__ import annotations
+import asyncio
 import json
 import logging
 import os
@@ -338,14 +345,89 @@ def _url_sin_credenciales(url: str) -> str:
     return _re.sub(r"//[^@/]+@", "//***@", url)
 
 
+def _verificar_conexion_async(db_url: str) -> None:
+    """
+    Chequeo rápido de alcanzabilidad con asyncpg (ADR-0013), antes de armar
+    el engine síncrono: falla temprano con un mensaje claro si el servidor
+    Postgres no responde, en vez de que el primer INSERT bloqueante se
+    cuelgue con un traceback confuso.
+
+    No reemplaza la capa ORM (que sigue en psycopg2 síncrono, ADR-0005) —
+    es una verificación de arranque puntual, best-effort si asyncpg no está
+    instalado (dependencia opcional de planta).
+    """
+    if "postgresql" not in db_url:
+        return
+    try:
+        import asyncpg
+    except ImportError:
+        logging.getLogger(__name__).warning(
+            "asyncpg no instalado — se omite la verificación rápida de conexión "
+            "(el engine síncrono psycopg2 igual intentará conectar)."
+        )
+        return
+
+    # asyncpg no entiende el sufijo +psycopg2/+asyncpg del driver — solo el DSN base
+    dsn = _re.sub(r"^postgresql\+\w+://", "postgresql://", db_url)
+
+    async def _probar() -> None:
+        conn = await asyncpg.connect(dsn, timeout=5)
+        await conn.close()
+
+    try:
+        asyncio.run(_probar())
+    except Exception as exc:
+        raise ConnectionError(
+            f"No se pudo conectar a PostgreSQL ({_url_sin_credenciales(db_url)}): {exc}"
+        ) from exc
+
+
+def _aplicar_migraciones(db_url_efectiva: str) -> None:
+    """
+    Corre `alembic upgrade head` contra el motor activo (ADR-0013): el
+    esquema se crea/actualiza de forma reproducible e incremental en vez de
+    un create_all() ciego — funciona igual para SQLite y PostgreSQL.
+
+    Best-effort con respaldo: si Alembic no está disponible (no instalado,
+    o migrations/ no empaquetada en el build de escritorio), degrada a
+    Base.metadata.create_all() con un aviso — nunca bloquea el arranque.
+    """
+    _logger = logging.getLogger(__name__)
+    try:
+        from alembic import command
+        from alembic.config import Config
+
+        raiz     = Path(__file__).resolve().parent.parent
+        ini_path = raiz / "alembic.ini"
+        if not ini_path.is_file():
+            raise FileNotFoundError(f"alembic.ini no encontrado en {ini_path}")
+
+        os.environ["AGENTDESK_ALEMBIC_DB_URL"] = db_url_efectiva
+        try:
+            cfg = Config(str(ini_path))
+            cfg.set_main_option("script_location", str(raiz / "migrations"))
+            command.upgrade(cfg, "head")
+        finally:
+            os.environ.pop("AGENTDESK_ALEMBIC_DB_URL", None)
+
+        _logger.info("Alembic: esquema actualizado a head (%s)",
+                     _url_sin_credenciales(db_url_efectiva))
+    except Exception as exc:
+        _logger.warning("Alembic no disponible/fallo (%s) — usando create_all() de respaldo.", exc)
+        Base.metadata.create_all(_engine)
+
+
 def init_db(db_path: str | Path | None = None) -> None:
     """
-    Inicializa la base de datos (modo dual, ADR-0005).
+    Inicializa la base de datos (modo dual, ADR-0005/0013).
 
     - Con AGENTDESK_DB_URL definida (y sin db_path explícito) usa ese motor:
-      PostgreSQL para planta (pool con pre-ping ante redes inestables), o
-      cualquier URL de SQLAlchemy — incluida sqlite:/// para pruebas.
-    - Sin la variable: SQLite local en el data dir (comportamiento histórico).
+      PostgreSQL para planta (pool con pre-ping ante redes inestables, y
+      chequeo async previo de conectividad), o cualquier URL de SQLAlchemy
+      — incluida sqlite:/// para pruebas.
+    - Sin la variable: SQLite local en el data dir (comportamiento histórico,
+      zero-config).
+    - El esquema lo gobierna Alembic (migrations/), no create_all() directo.
     """
     global _engine, _Session
     _logger = logging.getLogger(__name__)
@@ -354,12 +436,14 @@ def init_db(db_path: str | Path | None = None) -> None:
 
     if db_url and not db_url.startswith("sqlite"):
         # ── Motor industrial (PostgreSQL u otro servidor) ─────────────────
+        _verificar_conexion_async(db_url)
         _engine = create_engine(
             db_url,
             pool_pre_ping=True,    # detecta conexiones muertas (red de planta)
             pool_size=10,          # 10+ estaciones concurrentes
             max_overflow=20,
         )
+        db_url_efectiva = db_url
         _logger.info("DB industrial conectada: %s", _url_sin_credenciales(db_url))
     else:
         # ── SQLite (defecto escritorio, o URL sqlite:/// de AGENTDESK_DB_URL) ─
@@ -372,9 +456,10 @@ def init_db(db_path: str | Path | None = None) -> None:
 
         db_path = Path(db_path)
         db_path.parent.mkdir(parents=True, exist_ok=True)
+        db_url_efectiva = f"sqlite:///{db_path}"
 
         _engine = create_engine(
-            f"sqlite:///{db_path}",
+            db_url_efectiva,
             connect_args={"check_same_thread": False},
             poolclass=StaticPool,
         )
@@ -385,7 +470,7 @@ def init_db(db_path: str | Path | None = None) -> None:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA foreign_keys=ON")
 
-    Base.metadata.create_all(_engine)
+    _aplicar_migraciones(db_url_efectiva)
     _Session = sessionmaker(bind=_engine, expire_on_commit=False)
 
 

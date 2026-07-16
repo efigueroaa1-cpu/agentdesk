@@ -70,6 +70,14 @@ LEGACY_OVERSIZE: dict[str, int] = {
     "core/tools.py":                                                    1209,
     # web_monitor.py subio 593->595 (2026-07-14): validacion de esquema http(s)
     "core/web_monitor.py":                                               595,
+    # database.py subio 495->580 (2026-07-15, ADR-0013): migraciones Alembic
+    # (_aplicar_migraciones) + chequeo async de conexion Postgres con
+    # asyncpg (_verificar_conexion_async) antes de armar el engine sincrono
+    "core/database.py":                                                  580,
+    # gate.py mismo: crecio organicamente con cada fase (11 reglas nuevas
+    # entre Fase 11 y 15). Se acepta el tamano del propio Guardian en vez
+    # de partirlo artificialmente entre fases activas.
+    "scripts/gate.py":                                                   530,
     "dashboard.py":                                                     1257,
     "ui/dashboard.py":                                                  1257,
 }
@@ -334,6 +342,37 @@ def check_seguridad_herramientas() -> list[str]:
     return errores
 
 
+RE_DB_BLOQUEANTE = re.compile(r"\b(get_session|Session)\s*\(")
+
+
+def check_concurrencia_telemetria() -> list[str]:
+    """
+    ADR-0013 [DB-CONCURRENCY]: los adaptadores de telemetria OT
+    (core/adapters/base.py y los adaptadores de protocolo) no pueden hacer
+    consultas SQLAlchemy sincronas/bloqueantes (get_session()/Session())
+    directamente en su propio codigo. La telemetria corre en el mismo event
+    loop que el resto del sistema (ADR-0001) — una consulta bloqueante ahi
+    frena TODA la telemetria de planta, no solo esa lectura. Si un
+    adaptador necesita persistir algo, debe delegarlo (p.ej. via el
+    ReactorIndustrial a un servicio) en vez de tocar la sesion el mismo.
+    """
+    errores = []
+    archivos_telemetria = [
+        "core/adapters/base.py",
+        "core/adapters/modbus_adapter.py",
+        "core/adapters/mqtt_adapter.py",
+        "core/adapters/opcua_adapter.py",
+    ]
+    for rel in archivos_telemetria:
+        for n, linea in enumerate(leer(rel), 1):
+            if RE_DB_BLOQUEANTE.search(linea):
+                errores.append(
+                    f"  [DB-CONCURRENCY] {rel}:{n}: consulta SQLAlchemy sincrona directa "
+                    f"en un adaptador de telemetria -> bloquea el event loop de planta"
+                )
+    return errores
+
+
 def check_bandit() -> list[str]:
     """Análisis estático de vulnerabilidades (severidad media/alta)."""
     proc = subprocess.run(
@@ -372,6 +411,11 @@ def check_auditoria() -> list[str]:
 def check_enterprise() -> list[str]:
     """Fase 10: refresh tokens rotativos y chequeo de arranque seguro."""
     return _correr_suite("tests.enterprise.test_refresh_tokens", "ENTERPRISE")
+
+
+def check_persistencia_dual() -> list[str]:
+    """Fase 15: SQLite/PostgreSQL dual + esquema gobernado por Alembic."""
+    return _correr_suite("tests.persistence.test_dual_mode", "DB-DUAL")
 
 
 def check_hats() -> list[str]:
@@ -458,6 +502,8 @@ def main() -> int:
     errores += check_fase13()
     errores += check_contrato_metric_event(archivos)
     errores += check_credenciales_adapters_ot(archivos)
+    errores += check_concurrencia_telemetria()
+    errores += check_persistencia_dual()
 
     if errores:
         print(f"\nVIOLACIONES ({len(errores)}):")
