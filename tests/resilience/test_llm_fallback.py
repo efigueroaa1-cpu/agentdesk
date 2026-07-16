@@ -51,8 +51,8 @@ class TestLlmFallback(unittest.TestCase):
         self.assertIn("groq:ConnectionError", r["intentos"])
 
     def test_03_cadena_completa_degrada_a_mock(self):
-        """Los 3 proveedores reales caídos → el mock SIEMPRE responde."""
-        gen = _generador_con_fallos(fallan={"groq", "gemini", "openai"})
+        """Los 4 proveedores reales (incl. Ollama local) caídos → el mock SIEMPRE responde."""
+        gen = _generador_con_fallos(fallan={"groq", "gemini", "openai", "ollama"})
         r = _run(LlmService(generador=gen).generar("informe de ventas"))
         self.assertEqual(r["proveedor"], "mock")
         self.assertTrue(r["degradado"])

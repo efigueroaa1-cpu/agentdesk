@@ -1,10 +1,10 @@
 """
 core/services/llm_service.py — Resiliencia de Inteligencia (Fase 8, ADR-0006;
-extendido en Fase 19, ADR-0017).
+extendido en Fase 19, ADR-0017; Fase 20, ADR-0018).
 
 Cadena de fallback automática con Circuit Breaker por proveedor:
 
-    Groq → Gemini → OpenAI → MockProvider (siempre responde)
+    Groq → Gemini → OpenAI → Ollama (local) → MockProvider (siempre responde)
 
 - Un proveedor que falla (errores 5xx/red) o excede la latencia máxima
   (30 s) abre su circuito: queda 'inactivo' durante un periodo de enfriamiento
@@ -24,6 +24,25 @@ SIEMPRE lo intenta primero — el fallback nunca anula la elección explícita
 del usuario, solo la protege — y cae al resto de la cadena estándar si
 falla. También propaga el conteo de tokens (real cuando el proveedor lo
 expone, estimado si no) para la auditoría FinOps.
+
+Fase 20 (ADR-0018), Soberanía de Datos: se agrega `ollama` al final de la
+cadena de proveedores reales, ANTES del mock — entre "toda la nube caída"
+y "degradar a respuestas deterministas sin inteligencia real" hay un
+tercer estado: un modelo local (Ollama/LM Studio, `core.providers._ollama`)
+que sigue siendo inteligencia real, solo que sin salir a internet. `mock`
+se conserva como último eslabón porque sigue cumpliendo un rol distinto
+(garantiza respuesta SIEMPRE, incluso sin ningún servidor local corriendo,
+y es el determinismo que usa toda la suite de tests) — Ollama no lo
+reemplaza, se inserta antes.
+
+`CircuitBreaker` gana `abierto_desde`: el instante (monotonic) en que
+empezó la racha ACTUAL de indisponibilidad continua de un proveedor (se
+resetea a 0 en cuanto responde con éxito una vez). `abierto_hasta` por sí
+solo no alcanza para saber "cuánto lleva caído": con `ENFRIAMIENTO_S=120`
+un circuito nunca muestra más de 2 minutos de ventana cerrada de una sola
+vez, aunque sean 5 fallos seguidos del mismo problema de fondo
+arrastrándose 10 minutos. `alert_service` (Fase 20) usa `abierto_desde`
+para el SLO de "circuito abierto > 5 minutos".
 """
 from __future__ import annotations
 
@@ -40,6 +59,7 @@ CADENA_FALLBACK: list[tuple[str, str]] = [
     ("groq",   "groq:llama-3.3-70b-versatile"),
     ("gemini", "gemini:models/gemini-2.5-flash"),
     ("openai", "openai:gpt-4o-mini"),
+    ("ollama", "ollama:llama3.2"),   # Fase 20, ADR-0018: soberanía de datos local
     ("mock",   "mock:agentdesk-demo"),
 ]
 
@@ -53,6 +73,10 @@ class CircuitBreaker:
     """Estado del circuito de UN proveedor (cerrado/abierto/semi-abierto)."""
     fallos_consecutivos: int   = 0
     abierto_hasta:       float = 0.0    # time.monotonic() de reapertura
+    # Fase 20 (ADR-0018): inicio de la racha ACTUAL de indisponibilidad
+    # continua (0.0 = sano). Distinto de abierto_hasta -- ver docstring del
+    # módulo. Lo usa alert_service para el SLO de "circuito abierto >5min".
+    abierto_desde:        float = 0.0
 
     def disponible(self) -> bool:
         """Cerrado, o abierto pero ya en ventana semi-abierta (1 intento)."""
@@ -61,11 +85,14 @@ class CircuitBreaker:
     def registrar_exito(self) -> None:
         self.fallos_consecutivos = 0
         self.abierto_hasta       = 0.0
+        self.abierto_desde       = 0.0
 
     def registrar_fallo(self) -> None:
         self.fallos_consecutivos += 1
         if self.fallos_consecutivos >= FALLOS_PARA_ABRIR:
             self.abierto_hasta = time.monotonic() + ENFRIAMIENTO_S
+            if not self.abierto_desde:   # solo marca el INICIO de la racha
+                self.abierto_desde = time.monotonic()
 
 
 class LlmService:
@@ -175,6 +202,10 @@ class LlmService:
                 "activo": cb.disponible(),
                 "fallos_consecutivos": cb.fallos_consecutivos,
                 "reabre_en_s": max(0, round(cb.abierto_hasta - ahora, 1)),
+                # Fase 20 (ADR-0018): hace cuanto arranco la racha ACTUAL de
+                # indisponibilidad continua (0 si el circuito esta sano). Lo
+                # usa alert_service para el SLO "circuito abierto >5min".
+                "abierto_desde_hace_s": round(ahora - cb.abierto_desde, 1) if cb.abierto_desde else 0,
                 "latencia_prom_s": round(sum(lats) / len(lats), 2) if lats else None,
                 "latencia_ultima_s": round(lats[-1], 2) if lats else None,
                 "muestras": len(lats),
