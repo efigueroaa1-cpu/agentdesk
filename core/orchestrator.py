@@ -361,7 +361,9 @@ class AgentBase:
                         logger.info("Agente '%s' usa herramienta (Gemini): %s(%s)",
                                     self.nombre, nombre_tool, args,
                                     extra={"agente": self.nombre})
-                        resultado = await ejecutar_herramienta(nombre_tool, args)
+                        resultado = await ejecutar_herramienta(
+                            nombre_tool, args, agente_id_clave=aid, user_id=user_id,
+                        )
                         tool_parts.append(_gt.Part(
                             function_response=_gt.FunctionResponse(
                                 name=nombre_tool,
@@ -424,7 +426,9 @@ class AgentBase:
                     logger.info("Agente '%s' usa herramienta: %s(%s)",
                                 self.nombre, nombre_tool, args,
                                 extra={"agente": self.nombre})
-                    resultado = await ejecutar_herramienta(nombre_tool, args)
+                    resultado = await ejecutar_herramienta(
+                        nombre_tool, args, agente_id_clave=aid, user_id=user_id,
+                    )
                     messages.append({
                         "role":         "tool",
                         "tool_call_id": tc.id,
@@ -565,7 +569,9 @@ class AgentBase:
                                "herramienta": nombre_tool,
                                "args": {k: str(v)[:120] for k, v in args.items()}}
 
-                        resultado = await ejecutar_herramienta(nombre_tool, args)
+                        resultado = await ejecutar_herramienta(
+                            nombre_tool, args, agente_id_clave=aid, user_id=user_id,
+                        )
                         res_str   = str(resultado)
                         resultados_tools.append(f"[{nombre_tool}]\n{res_str[:800]}")
 
@@ -650,7 +656,9 @@ class AgentBase:
                                "herramienta": nombre_tool,
                                "args": {k: str(v)[:120] for k, v in args.items()}}
 
-                        resultado = await ejecutar_herramienta(nombre_tool, args)
+                        resultado = await ejecutar_herramienta(
+                            nombre_tool, args, agente_id_clave=aid, user_id=user_id,
+                        )
                         res_str   = str(resultado)
                         resultados_tools.append(f"[{nombre_tool}]\n{res_str[:800]}")
 
