@@ -307,10 +307,12 @@ class AuditoriaIA(Base):
     modelo             = Column(String(96))
     prompt             = Column(Text)                     # entrada (truncada)
     contexto           = Column(Text)                     # sesion/archivo/tarea
+    contexto_hats      = Column(Text)                     # memoria HATs inyectada (ADR-0014)
     respuesta          = Column(Text)                     # salida (truncada)
     herramientas_json  = Column(Text, default="[]")       # tools invocadas
     costo_estimado     = Column(Integer, default=0)       # tokens aprox (len/4)
     veredicto_guardrail = Column(String(32), default="no_aplica")
+    guardrails_json    = Column(Text, default="[]")       # veredicto de CADA guardrail (ADR-0014)
     duracion_s         = Column(Float)
     exitoso            = Column(Boolean, default=True)
 
@@ -325,10 +327,12 @@ class AuditoriaIA(Base):
             "modelo":              self.modelo,
             "prompt":              self.prompt,
             "contexto":            self.contexto,
+            "contexto_hats":       self.contexto_hats or "",
             "respuesta":           self.respuesta,
             "herramientas":        json.loads(self.herramientas_json or "[]"),
             "costo_estimado":      self.costo_estimado,
             "veredicto_guardrail": self.veredicto_guardrail,
+            "guardrails":          json.loads(self.guardrails_json or "[]"),
             "duracion_s":          self.duracion_s,
             "exitoso":             self.exitoso,
         }

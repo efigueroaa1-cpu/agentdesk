@@ -756,6 +756,24 @@ async def diagnostico_llm() -> dict:
             "cadena": [p for p, _ in llm_service._cadena]}
 
 
+@app.get("/diagnostico/tracing")
+async def diagnostico_tracing(limit: int = 100) -> dict:
+    """Últimos spans OTEL capturados en memoria (ADR-0014) — sin depender de un Collector."""
+    from core.telemetry_otel import spans_recientes
+    return {"spans": spans_recientes(limit)}
+
+
+@app.get("/metrics")
+async def metricas_prometheus():
+    """Métricas en formato Prometheus (ADR-0014): interacciones, tokens, duración, circuitos LLM."""
+    from fastapi import Response
+    from core.metrics_prometheus import actualizar_circuitos_llm, generar_exposicion
+    from core.services.llm_service import llm_service
+    actualizar_circuitos_llm(llm_service.estado_circuitos())
+    payload, content_type = generar_exposicion()
+    return Response(content=payload, media_type=content_type)
+
+
 @app.get("/auditoria/interacciones")
 async def auditoria_interacciones(req: "Request", agente_id: str = "",
                                   user_id: str = "", limit: int = 50) -> dict:
