@@ -220,17 +220,46 @@ class BaseTelemetryAdapter:
     # ── Ciclo de vida ─────────────────────────────────────────────────────
 
     async def ciclo(self, max_ticks: int | None = None) -> None:
-        """Bucle de muestreo por polling (el modo real puede sobreescribirlo)."""
+        """
+        Bucle de muestreo por polling con reconexión automática (ADR-0012).
+
+        Si _leer_valor() falla (PLC/broker caído, timeout de red), el ciclo
+        NO muere: aplica backoff exponencial (2s, 4s, 8s... tope 60s), llama
+        al hook _reconectar() de la subclase (cierra el cliente roto para
+        forzar una conexión nueva) y reintenta. Un ciclo exitoso resetea el
+        backoff a cero — la recuperación es tan rápida como la caída.
+        """
         tick = 0
+        backoff_s = 0.0
         while max_ticks is None or tick < max_ticks:
             self._simulador.avanzar()
-            for sensor in self.SENSORES:
-                if not self._estado[sensor["id"]]["activo"]:
-                    continue
-                await self._difundir(self._evento_de(sensor, self._leer_valor(sensor)))
+            try:
+                for sensor in self.SENSORES:
+                    if not self._estado[sensor["id"]]["activo"]:
+                        continue
+                    await self._difundir(self._evento_de(sensor, self._leer_valor(sensor)))
+                backoff_s = 0.0
+            except Exception as exc:
+                backoff_s = 2.0 if backoff_s == 0.0 else min(backoff_s * 2, 60.0)
+                logger.warning(
+                    "Telemetria (%s): fallo de lectura/conexion (%s) — reconectando en %.0fs",
+                    self.protocolo(), exc, backoff_s,
+                )
+                await self._reconectar()
+                await asyncio.sleep(backoff_s)
+                continue
             tick += 1
             if max_ticks is None or tick < max_ticks:
                 await asyncio.sleep(self._intervalo_s)
+
+    async def _reconectar(self) -> None:
+        """
+        Hook de reconexión (ADR-0012): cada adaptador que mantenga un
+        cliente con estado (Modbus, OPC-UA) lo sobreescribe para cerrar y
+        anular ese cliente, forzando una conexión nueva en el próximo
+        intento de lectura. No-op por defecto (p.ej. SimuladorPlanta puro).
+        """
+        return None
 
     def iniciar(self) -> asyncio.Task:
         if self._task is None or self._task.done():
