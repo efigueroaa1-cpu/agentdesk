@@ -1,0 +1,89 @@
+name: Quality Gate
+
+# Fase 17 (ADR-0015): automatiza gate.ps1 en cada push/PR — antes dependia
+# por completo de que cada desarrollador lo corriera localmente antes de
+# subir. Corre en windows-latest porque gate.ps1 esta escrito para Windows
+# PowerShell 5.1 (ver comentario en el propio script); portarlo a PowerShell
+# Core multiplataforma queda fuera de alcance de esta fase.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+permissions:
+  contents: read
+
+jobs:
+  quality-gate:
+    name: gate.ps1 (arquitectura + seguridad + tests)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: "pip"
+
+      - name: Instalar dependencias Python
+        run: pip install -r requirements.txt
+
+      - name: Ejecutar gate.ps1 (Quality Gate completo)
+        run: .\gate.ps1
+        shell: pwsh
+
+      - name: Ejecutar suite completa de tests (106 tests, incluye Fase 17)
+        run: python -m unittest discover -s tests -t . -p "test_*.py" -v
+        shell: pwsh
+
+  frontend-bundle-budget:
+    name: Presupuesto de bundle inicial (<500 KB, ADR-0015)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: agentdesk-dashboard/package-lock.json
+
+      - name: Instalar dependencias del frontend
+        working-directory: agentdesk-dashboard
+        run: npm ci
+
+      - name: Build de producción (Vite)
+        working-directory: agentdesk-dashboard
+        run: npm run build
+
+      - name: Verificar presupuesto del bundle inicial (<500 KB)
+        working-directory: agentdesk-dashboard
+        shell: bash
+        run: |
+          set -euo pipefail
+          # El bundle inicial es lo que index.html carga de forma eager:
+          # el script de entrada + los chunks con rel="modulepreload".
+          # vendor-charts/vendor-maps son lazy (solo se piden al montar un
+          # panel pesado) y no cuentan aqui — ver ADR-0015 para el detalle.
+          entrada=$(grep -oP '(?<=src=")/ui/assets/[^"]+\.js' dist/index.html | head -1)
+          precargas=$(grep -oP '(?<=href=")/ui/assets/[^"]+\.js' dist/index.html)
+          total=0
+          for ref in "$entrada" $precargas; do
+            archivo="dist${ref#/ui}"
+            tam=$(stat -c%s "$archivo")
+            total=$((total + tam))
+            echo "  $archivo: ${tam} bytes"
+          done
+          echo "Bundle inicial total: ${total} bytes ($((total / 1024)) KB)"
+          limite=$((500 * 1024))
+          if [ "$total" -gt "$limite" ]; then
+            echo "::error::Bundle inicial de ${total} bytes supera el presupuesto de 500 KB (ADR-0015)"
+            exit 1
+          fi
+          echo "OK: bundle inicial dentro del presupuesto de 500 KB."
