@@ -96,7 +96,9 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # subio 590->642 (2026-07-16, ADR-0016): regla [BOOT-VALIDATION]
     # subio 642->700 (2026-07-16, ADR-0017): regla [LLM-RESILIENCE]
     # subio 700->748 (2026-07-16, ADR-0018): regla [DATA-HYGIENE]
-    "scripts/gate.py":                                                   748,
+    # subio 748->798 (2026-07-16, ADR-0019): regla [SCALE-LIMITS]
+    # subio 798->808 (2026-07-16, ADR-0019): check_escalabilidad() (suite scale/)
+    "scripts/gate.py":                                                   808,
     "dashboard.py":                                                     1257,
     "ui/dashboard.py":                                                  1257,
     # providers.py subio de <500 a 528 (2026-07-16, ADR-0017): generate_con_uso()
@@ -401,6 +403,54 @@ def check_data_hygiene() -> list[str]:
     return errores
 
 
+# Escalabilidad Enterprise (Fase 21, ADR-0019): toda funcion que ya se
+# despacha via queue_service.ejecutar_pesado()/encolar() (la misma lista de
+# nombres que RE_PESADO/check_pesado_sincrono vigila desde el lado del
+# llamador, mas la funcion Reduce del Map-Reduce nuevo) debe declarar su
+# costo de recursos estimado -- sin esa metadata, dimensionar cuantos
+# workers reales hacen falta antes de activar Queue Mode distribuido en
+# produccion es puro tanteo.
+FUNCIONES_PESADAS_CON_COSTO = {
+    "generar_pdf_gantt", "embeddings_3d", "crear_backup", "generar_pdf",
+    "_reducir_resultados",
+}
+
+
+def check_scale_limits(archivos: list[str]) -> list[str]:
+    """
+    ADR-0019 [SCALE-LIMITS]: cada funcion pesada despachada via QueuePort
+    debe llevar el decorador @costo_recursos(cpu=..., memoria=...)
+    (core/services/resource_guard.py) inmediatamente antes de su def.
+    """
+    errores = []
+    for rel in archivos:
+        if not (rel.startswith("core/") and rel.endswith(".py")):
+            continue
+        # core/api/* son endpoints (adaptador HTTP) -- pueden coincidir de
+        # nombre por casualidad con la funcion pesada real que despachan via
+        # queue_service (p.ej. el endpoint async def generar_pdf(payload)
+        # vs. la funcion sincrona core.report_generator.generar_pdf que
+        # realmente hace el trabajo). El costo se declara donde vive el
+        # trabajo, no en el adaptador que lo despacha.
+        if rel.startswith("core/api/"):
+            continue
+        lineas = leer(rel)
+        for n, linea in enumerate(lineas, 1):
+            m = re.match(r"\s*(?:async\s+)?def\s+(\w+)\s*\(", linea)
+            if not m or m.group(1) not in FUNCIONES_PESADAS_CON_COSTO:
+                continue
+            # @costo_recursos( puede estar hasta 3 lineas antes (permite
+            # decoradores intercalados, p.ej. @staticmethod).
+            precedentes = lineas[max(0, n - 4):n - 1]
+            if not any("@costo_recursos(" in l for l in precedentes):
+                errores.append(
+                    f"  [SCALE-LIMITS] {rel}:{n}: def {m.group(1)}(...)  "
+                    f"<- funcion pesada sin @costo_recursos(cpu=..., memoria=...) "
+                    f"(core/services/resource_guard.py)"
+                )
+    return errores
+
+
 def check_tests_adaptadores(archivos: list[str]) -> list[str]:
     """
     ADR-0004: cada adaptador industrial (core/adapters/<x>_adapter.py) debe
@@ -623,6 +673,14 @@ def check_auditoria() -> list[str]:
     return _correr_suite("tests.audit.test_audit_trail", "AUDITORIA")
 
 
+def check_escalabilidad() -> list[str]:
+    """Fase 21: Queue Mode (deteccion de broker), Circuit Breaker de
+    Concurrencia y orquestacion paralela Map-Reduce."""
+    return (_correr_suite("tests.scale.test_queue_broker_detection", "ESCALABILIDAD")
+            + _correr_suite("tests.scale.test_resource_guard", "ESCALABILIDAD")
+            + _correr_suite("tests.scale.test_map_reduce", "ESCALABILIDAD"))
+
+
 def check_enterprise() -> list[str]:
     """Fase 10: refresh tokens rotativos y chequeo de arranque seguro."""
     return _correr_suite("tests.enterprise.test_refresh_tokens", "ENTERPRISE")
@@ -710,6 +768,8 @@ def main() -> int:
     errores += check_boot_validation()
     errores += check_llm_resilience(archivos)
     errores += check_data_hygiene()
+    errores += check_scale_limits(archivos)
+    errores += check_escalabilidad()
     errores += check_tests_adaptadores(archivos)
     errores += check_bandit()
     errores += check_contrato_auth()

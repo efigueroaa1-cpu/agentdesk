@@ -8,8 +8,10 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 from core.timeutil import utcnow
+from core.services.resource_guard import costo_recursos
 
 
+@costo_recursos(cpu="medio", memoria="bajo")
 def generar_pdf_gantt(proyecto: dict, indicadores=None, _agente_id: str | None = None) -> bytes:
     """Genera PDF de avance de obra usando primitivas fpdf (sin imágenes externas)."""
     from fpdf import FPDF

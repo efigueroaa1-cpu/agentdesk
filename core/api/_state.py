@@ -95,6 +95,7 @@ from core.services import insights_service as _insights
 from core.services import upload_service as _uploads
 from core.services import report_service as _reports
 from core.services.queue_service import queue_service as _queue
+from core.services.map_reduce_service import MapReduceService
 
 _agent_service = AgentService(
     get_orquestador=lambda: _orquestador,
@@ -106,6 +107,9 @@ _orch_service = OrchestratorService(
     get_bridge=lambda: _bridge,
     broadcast=lambda msg: manager.broadcast(msg),
 )
+# Fase 21 (ADR-0019): orquestacion paralela Map-Reduce -- mismo patron
+# get_orquestador perezoso que _agent_service/_orch_service.
+_map_reduce_service = MapReduceService(get_orquestador=lambda: _orquestador)
 
 
 def registrar_bridge(bridge: CommandBridge) -> None:
