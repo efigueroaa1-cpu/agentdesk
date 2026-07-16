@@ -56,7 +56,10 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # orchestrator subio 1215->1223 (2026-07-14): hook del sandbox Zero-Trust
     # subio 1223->1242 (2026-07-15, ADR-0009): self.harnesses + inyeccion del
     # contexto de HATs (_contexto_harnesses) en las 4 rutas de chat
-    "core/orchestrator.py":                                             1242,
+    # subio 1242->1269 (2026-07-15, ADR-0010): user_id enhebrado en las 4
+    # rutas de chat (aislamiento de memoria) + _criticar_respuesta wireado
+    # en chat_libre/chat_con_herramientas (CritiqueHarness post-hook)
+    "core/orchestrator.py":                                             1269,
     # tools.py subio 1120->1153 (2026-07-14): evaluador AST que reemplaza eval()
     "core/tools.py":                                                    1153,
     # web_monitor.py subio 593->595 (2026-07-14): validacion de esquema http(s)
@@ -289,8 +292,29 @@ def check_enterprise() -> list[str]:
 
 
 def check_hats() -> list[str]:
-    """Fase 11: HATs (ContextHarness) — memoria semántica best-effort."""
-    return _correr_suite("tests.harnesses.test_memoria_harness", "HAT")
+    """Fases 11/12: HATs (ContextHarness + CritiqueHarness) — best-effort."""
+    return (_correr_suite("tests.harnesses.test_memoria_harness", "HAT")
+            + _correr_suite("tests.harnesses.test_autocritica_harness", "HAT"))
+
+
+def check_aislamiento_memoria() -> list[str]:
+    """
+    ADR-0010 [DATA-ISOLATION]: toda consulta de auditoria_ia que hace
+    ContextHarness para armar memoria semántica debe ir filtrada por
+    user_id — nunca solo por agente_id. Sin este filtro, un operador podría
+    recibir recuerdos sembrados por otro operador del mismo agente.
+    """
+    errores = []
+    lineas = leer("core/services/harness_service.py")
+    for n, linea in enumerate(lineas, 1):
+        if "consultar(agente_id=" not in linea:
+            continue
+        if "user_id=" not in linea:
+            errores.append(
+                f"  [DATA-ISOLATION] core/services/harness_service.py:{n}: "
+                f"consulta de memoria sin filtro user_id -> fuga entre operadores"
+            )
+    return errores
 
 
 def check_telemetria_industrial() -> list[str]:
@@ -340,6 +364,7 @@ def main() -> int:
     errores += check_enterprise()
     errores += check_harnesses()
     errores += check_hats()
+    errores += check_aislamiento_memoria()
 
     if errores:
         print(f"\nVIOLACIONES ({len(errores)}):")

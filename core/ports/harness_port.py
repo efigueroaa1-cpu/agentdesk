@@ -26,13 +26,16 @@ class HarnessPort(Protocol):
         """Libera el estado atado al agente (fin de la interacción)."""
         ...
 
-    def apply_hooks(self, fase: str, contexto: dict) -> dict:
+    async def apply_hooks(self, fase: str, contexto: dict) -> dict:
         """
         Ejecuta el hook de la fase indicada sobre el contexto de la
         interacción y devuelve el contexto (posiblemente enriquecido).
+        Async porque un HAT puede necesitar volver a llamar al LLM (p.ej.
+        CritiqueHarness regenerando una respuesta rechazada).
 
         fase='pre'  — antes de enviar el prompt al LLM (p.ej. inyectar
-                       memoria recuperada en contexto['memoria_semantica']).
+                       memoria recuperada en contexto['memoria_semantica'],
+                       filtrada obligatoriamente por contexto['user_id']).
         fase='post' — después de recibir la respuesta (p.ej. autocrítica
                        corrigiendo contexto['respuesta']).
         """

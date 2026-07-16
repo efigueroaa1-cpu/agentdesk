@@ -132,14 +132,15 @@ class AgentBase:
         )
         return True
 
-    async def _contexto_harnesses(self, mensaje: str, agente_id_clave: str) -> str:
-        """Contexto extra best-effort de los HATs configurados (ADR-0009)."""
+    async def _contexto_harnesses(self, mensaje: str, agente_id_clave: str,
+                                   user_id: str = "anonimo") -> str:
+        """Contexto extra best-effort de los HATs configurados (ADR-0009/0010)."""
         if not self.harnesses:
             return ""
         try:
             from core.services.harness_service import harness_service
             extra = await harness_service.aplicar_pre(
-                self.harnesses, agente_id_clave or self.nombre, mensaje,
+                self.harnesses, agente_id_clave or self.nombre, mensaje, user_id=user_id,
             )
             return f"\n\n{extra}\n" if extra else ""
         except Exception as exc:
@@ -147,12 +148,29 @@ class AgentBase:
                            self.nombre, exc, extra={"agente": self.nombre})
             return ""
 
+    async def _criticar_respuesta(self, mensaje: str, respuesta: str,
+                                   agente_id_clave: str, user_id: str = "anonimo") -> str:
+        """Post-hook best-effort de autocrítica (CritiqueHarness, ADR-0010)."""
+        if not self.harnesses:
+            return respuesta
+        try:
+            from core.services.harness_service import harness_service
+            return await harness_service.aplicar_post(
+                self.harnesses, agente_id_clave or self.nombre, respuesta,
+                mensaje=mensaje, user_id=user_id, modelo=self.modelo,
+            )
+        except Exception as exc:
+            logger.warning("HATs: autocritica no aplicada para '%s' (%s)",
+                           self.nombre, exc, extra={"agente": self.nombre})
+            return respuesta
+
     async def chat_libre(
         self,
         mensaje: str,
         contexto_archivo: str = "",
         sesion_id: str = "default",
         agente_id_clave: str = "",
+        user_id: str = "anonimo",
     ) -> str:
         """
         Responde en modo conversacional libre con memoria persistente.
@@ -176,7 +194,7 @@ class AgentBase:
         archivo_ctx = (f"\n\nContenido del archivo adjunto:\n{contexto_archivo[:6000]}\n"
                        if contexto_archivo else "")
         memoria_ctx = f"\n\n{historial_ctx}\n" if historial_ctx else ""
-        harness_ctx = await self._contexto_harnesses(mensaje, aid)
+        harness_ctx = await self._contexto_harnesses(mensaje, aid, user_id)
 
         prompt = (
             f"{rol}"
@@ -212,7 +230,8 @@ class AgentBase:
                              extra={"agente": self.nombre, "error_type": "chat_api"})
                 return f"Error al procesar la solicitud: {exc}"
 
-        # 5. Guardar respuesta del agente en memoria
+        # 5. Autocritica (CritiqueHarness, ADR-0010) + guardar en memoria
+        respuesta = await self._criticar_respuesta(mensaje, respuesta, aid, user_id)
         _mem.guardar_mensaje(aid, sesion_id, "agente", respuesta)
         return respuesta
 
@@ -222,6 +241,7 @@ class AgentBase:
         sesion_id:       str = "default",
         agente_id_clave: str = "",
         archivo_id:      str | None = None,
+        user_id:         str = "anonimo",
     ) -> tuple[str, list[str]]:
         """
         Chat con Tool Calling — el agente decide solo qué herramientas usar.
@@ -237,16 +257,23 @@ class AgentBase:
         # Anthropic no tiene tool calling en este flujo — fallback
         if proveedor not in ("groq", "openai", "deepseek", "gemini"):
             respuesta = await self.chat_libre(mensaje, sesion_id=sesion_id,
-                                              agente_id_clave=agente_id_clave)
+                                              agente_id_clave=agente_id_clave,
+                                              user_id=user_id)
             return respuesta, []
 
         aid = agente_id_clave or self.nombre
         _mem.guardar_mensaje(aid, sesion_id, "usuario", mensaje)
 
+        async def _cerrar(texto: str) -> tuple[str, list[str]]:
+            """Autocritica (CritiqueHarness, ADR-0010) + guardar en memoria."""
+            texto = await self._criticar_respuesta(mensaje, texto, aid, user_id)
+            _mem.guardar_mensaje(aid, sesion_id, "agente", texto)
+            return texto, herramientas_usadas
+
         historial_ctx = _mem.get_contexto(aid, sesion_id, n_mensajes=6)
         rol           = f"{self.prompt_base}\n\n" if self.prompt_base else ""
         memoria_ctx   = f"\n\n{historial_ctx}\n" if historial_ctx else ""
-        harness_ctx   = await self._contexto_harnesses(mensaje, aid)
+        harness_ctx   = await self._contexto_harnesses(mensaje, aid, user_id)
 
         archivo_hint = (
             f"\nEl usuario ha adjuntado el archivo con ID '{archivo_id}'. "
@@ -320,8 +347,7 @@ class AgentBase:
 
                     if not fn_calls:
                         respuesta = "".join(text_parts).strip()
-                        _mem.guardar_mensaje(aid, sesion_id, "agente", respuesta)
-                        return respuesta, herramientas_usadas
+                        return await _cerrar(respuesta)
 
                     # Añadir respuesta del modelo al hilo
                     contents.append(candidate.content)
@@ -352,8 +378,7 @@ class AgentBase:
                     config=_gt.GenerateContentConfig(temperature=self.temperatura),
                 )
                 respuesta = (response.text or "").strip()
-                _mem.guardar_mensaje(aid, sesion_id, "agente", respuesta)
-                return respuesta, herramientas_usadas
+                return await _cerrar(respuesta)
 
             # ── Groq / OpenAI / DeepSeek (API compatible OpenAI) ─────────────
             if proveedor == "groq":
@@ -384,8 +409,7 @@ class AgentBase:
 
                 if finish == "stop" or not msg.tool_calls:
                     respuesta = msg.content or ""
-                    _mem.guardar_mensaje(aid, sesion_id, "agente", respuesta)
-                    return respuesta, herramientas_usadas
+                    return await _cerrar(respuesta)
 
                 messages.append({"role": "assistant", "content": msg.content or "",
                                   "tool_calls": [tc.model_dump() for tc in msg.tool_calls]})
@@ -415,14 +439,14 @@ class AgentBase:
                 temperature=self.temperatura, max_tokens=2048,
             )
             respuesta = response.choices[0].message.content or ""
-            _mem.guardar_mensaje(aid, sesion_id, "agente", respuesta)
-            return respuesta, herramientas_usadas
+            return await _cerrar(respuesta)
 
         except Exception as exc:
             logger.error("chat_con_herramientas '%s': %s", self.nombre, exc,
                          extra={"agente": self.nombre})
             respuesta = await self.chat_libre(mensaje, sesion_id=sesion_id,
-                                              agente_id_clave=agente_id_clave)
+                                              agente_id_clave=agente_id_clave,
+                                              user_id=user_id)
             return respuesta, []
 
     async def chat_con_herramientas_stream(
@@ -431,6 +455,7 @@ class AgentBase:
         sesion_id:       str = "default",
         agente_id_clave: str = "",
         archivo_id:      str | None = None,
+        user_id:         str = "anonimo",
     ):
         """
         Streaming con Tool Calling en dos fases:
@@ -450,7 +475,8 @@ class AgentBase:
 
         # Proveedores sin tool calling → streaming directo sin tools
         if proveedor not in ("groq", "openai", "deepseek", "gemini"):
-            async for chunk in self.chat_libre_stream(mensaje, "", sesion_id, agente_id_clave):
+            async for chunk in self.chat_libre_stream(mensaje, "", sesion_id, agente_id_clave,
+                                                       user_id=user_id):
                 yield {"tipo": "chunk", "chunk": chunk}
             return
 
@@ -460,7 +486,7 @@ class AgentBase:
         historial_ctx = _mem.get_contexto(aid, sesion_id, n_mensajes=6)
         rol           = f"{self.prompt_base}\n\n" if self.prompt_base else ""
         memoria_ctx   = f"\n\n{historial_ctx}\n" if historial_ctx else ""
-        harness_ctx   = await self._contexto_harnesses(mensaje, aid)
+        harness_ctx   = await self._contexto_harnesses(mensaje, aid, user_id)
 
         archivo_hint = (
             f"\nEl usuario ha adjuntado el archivo con ID '{archivo_id}'. "
@@ -665,6 +691,7 @@ class AgentBase:
         contexto_archivo: str = "",
         sesion_id: str = "default",
         agente_id_clave: str = "",
+        user_id: str = "anonimo",
     ):
         """
         Versión streaming de chat_libre.
@@ -682,7 +709,7 @@ class AgentBase:
         archivo_ctx   = (f"\n\nContenido del archivo adjunto:\n{contexto_archivo[:6000]}\n"
                          if contexto_archivo else "")
         memoria_ctx   = f"\n\n{historial_ctx}\n" if historial_ctx else ""
-        harness_ctx   = await self._contexto_harnesses(mensaje, aid)
+        harness_ctx   = await self._contexto_harnesses(mensaje, aid, user_id)
 
         prompt = (
             f"{rol}"
