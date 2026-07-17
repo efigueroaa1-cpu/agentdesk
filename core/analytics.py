@@ -301,5 +301,148 @@ class MotorAnalitica:
         return resultado
 
 
+# ── Gemelo Digital Operativo (Fase 23, ADR-0021) ───────────────────────────────
+
+FACTOR_PARADA          = 0.05   # bajo esto, la produccion se considera DETENIDA
+FACTOR_MAXIMO          = 1.25   # sobre-rendimiento acotado (no proyectar milagros)
+VENTANA_EVENTOS_FACTOR = 60     # ultimos N eventos por sensor para el factor
+
+
+class MotorCorrelacionOT:
+    """
+    Vincula tags de planta (Modbus/OPC-UA/MQTT) con proyectos Gantt y ajusta
+    la proyección de la Curva S con el rendimiento REAL de producción.
+
+    La Curva S clásica (MotorAnalitica) solo ve el avance REPORTADO
+    (pct_completado cargado a mano en Gantt). Este motor agrega la señal
+    física: si los sensores vinculados muestran la línea produciendo a X%
+    de su rendimiento nominal, el trabajo restante tomará 1/X veces lo
+    planificado — eso adelanta HOY la detección de un atraso que el
+    cronograma solo confesaría semanas después.
+    """
+
+    def __init__(self):
+        # proyecto_id -> [{sensor_id, rendimiento_nominal}]; el rendimiento
+        # nominal es el valor del tag a produccion plena (ej. ciclos/min).
+        self._vinculos: dict[str, list[dict]] = {}
+
+    def vincular(self, proyecto_id: str, sensor_id: str,
+                 rendimiento_nominal: float) -> dict:
+        if rendimiento_nominal <= 0:
+            raise ValueError("rendimiento_nominal debe ser > 0")
+        vinculo = {"sensor_id": sensor_id,
+                   "rendimiento_nominal": float(rendimiento_nominal)}
+        self._vinculos.setdefault(proyecto_id, []).append(vinculo)
+        return vinculo
+
+    def vinculos_de(self, proyecto_id: str) -> list[dict]:
+        return list(self._vinculos.get(proyecto_id, []))
+
+    def factor_produccion(self, proyecto_id: str) -> dict:
+        """
+        Rendimiento real de la planta vs. nominal, en [0, FACTOR_MAXIMO].
+        1.0 = produciendo a plan; ~0 = parada de maquina. Sin vinculos o sin
+        telemetria: factor 1.0 con detalle explicito (la Curva S clasica
+        sigue valiendo tal cual — el Gemelo no inventa datos que no tiene).
+        """
+        from core.telemetry_history import eventos_recientes
+        vinculos = self._vinculos.get(proyecto_id, [])
+        if not vinculos:
+            return {"factor": 1.0, "sensores": [], "parada_detectada": False,
+                    "detalle": "sin vinculos OT"}
+
+        sensores = []
+        factores = []
+        for v in vinculos:
+            eventos = eventos_recientes(limit=VENTANA_EVENTOS_FACTOR,
+                                        fuente=v["sensor_id"])
+            valores = [e["valor"] for e in eventos
+                       if isinstance(e.get("valor"), (int, float))]
+            if not valores:
+                sensores.append({**v, "factor": None, "muestras": 0})
+                continue
+            promedio = sum(valores) / len(valores)
+            factor   = max(0.0, min(FACTOR_MAXIMO,
+                                    promedio / v["rendimiento_nominal"]))
+            factores.append(factor)
+            sensores.append({**v, "factor": round(factor, 3),
+                             "muestras": len(valores)})
+
+        if not factores:
+            return {"factor": 1.0, "sensores": sensores, "parada_detectada": False,
+                    "detalle": "vinculos sin telemetria reciente"}
+        factor_global = round(sum(factores) / len(factores), 3)
+        return {"factor": factor_global, "sensores": sensores,
+                "parada_detectada": factor_global < FACTOR_PARADA,
+                "detalle": f"{len(factores)} sensor(es) con telemetria"}
+
+    def proyeccion_ajustada(self, proyecto_id: str) -> dict:
+        """
+        Curva S clasica + señal fisica de planta:
+          - nueva fecha fin proyectada (trabajo restante / factor real),
+          - impacto_cronograma si esa fecha supera el fin planificado,
+          - EAC ajustado y riesgo_presupuesto si supera el BAC.
+        Emite AUDITORIA_SEGURIDAD ante riesgo financiero — la alerta
+        proactiva del criterio de la fase, deterministica (no depende del
+        juicio de un LLM para dispararse).
+        """
+        base       = motor_analitica.calcular_curva_s(proyecto_id)
+        produccion = self.factor_produccion(proyecto_id)
+        factor     = produccion["factor"]
+
+        try:
+            from core.gantt import motor_gantt
+            proyecto   = motor_gantt.obtener_proyecto(proyecto_id)
+            fines_plan = [t["fin_plan"] for t in proyecto.get("tareas", [])
+                          if t.get("fin_plan")]
+            fin_plan   = max(fines_plan) if fines_plan else None
+        except Exception:
+            fin_plan = None
+
+        hoy = utcnow()
+        impacto = {"impacto_cronograma": False, "dias_atraso_proyectados": 0,
+                   "fin_plan": fin_plan, "fin_proyectado": fin_plan}
+        if fin_plan:
+            fin_dt          = datetime.fromisoformat(str(fin_plan)[:19])
+            dias_restantes  = max(0.0, (fin_dt - hoy).total_seconds() / 86400)
+            factor_efectivo = max(factor, FACTOR_PARADA)
+            dias_ajustados  = dias_restantes / factor_efectivo
+            fin_proyectado  = hoy + timedelta(days=dias_ajustados)
+            atraso          = max(0, round(dias_ajustados - dias_restantes))
+            impacto = {
+                "impacto_cronograma":      fin_proyectado > fin_dt and atraso >= 1,
+                "dias_atraso_proyectados": atraso,
+                "fin_plan":                fin_dt.strftime("%Y-%m-%d"),
+                "fin_proyectado":          fin_proyectado.strftime("%Y-%m-%d"),
+            }
+
+        kpis = base.get("kpis", {})
+        bac  = kpis.get("bac", 0) or 0
+        cpi  = kpis.get("cpi", 1) or 1
+        eac_ajustado = round(bac / max(cpi * max(factor, FACTOR_PARADA), 0.01), 2) if bac else 0
+        riesgo_presupuesto = bool(bac) and eac_ajustado > bac * 1.05  # >5% sobre BAC
+
+        if riesgo_presupuesto:
+            logger.error(
+                "AUDITORIA_SEGURIDAD: riesgo financiero por telemetria de planta — "
+                "proyecto '%s': factor_produccion=%.2f, EAC ajustado %.2f supera "
+                "BAC %.2f (parada=%s, atraso proyectado=%s dias)",
+                proyecto_id, factor, eac_ajustado, bac,
+                produccion.get("parada_detectada", False),
+                impacto["dias_atraso_proyectados"],
+            )
+
+        return {
+            "proyecto_id":        proyecto_id,
+            "curva_s":            base,
+            "produccion":         produccion,
+            **impacto,
+            "eac_ajustado":       eac_ajustado,
+            "riesgo_presupuesto": riesgo_presupuesto,
+            "spi_fisico":         round((kpis.get("spi", 1) or 1) * factor, 3),
+        }
+
+
 # ── Singleton ──────────────────────────────────────────────────────────────────
-motor_analitica = MotorAnalitica()
+motor_analitica   = MotorAnalitica()
+motor_correlacion = MotorCorrelacionOT()

@@ -21,17 +21,21 @@ logger = logging.getLogger(__name__)
 
 # Holding registers típicos de un PLC de línea (direcciones ilustrativas)
 SENSORES: list[dict] = [
+    # min_fisico/max_fisico: rango de validez FISICA ([INDUSTRIAL-INTEGRITY],
+    # ADR-0021) — fuera de el, la lectura se descarta del Gemelo Digital.
     {
         "id": "temp_reactor_2", "nombre": "Temperatura Reactor 2",
         "registro": 40001, "unit": 1, "escala": 0.1, "unidad": "°C",
         "base": 180.0, "amplitud": 35.0,
         "umbral_warn": 205.0, "umbral_critico": 212.0,
+        "min_fisico": 0.0, "max_fisico": 350.0,
     },
     {
         "id": "caudal_bomba_5", "nombre": "Caudal Bomba 5",
         "registro": 40003, "unit": 1, "escala": 0.01, "unidad": "m³/h",
         "base": 42.0, "amplitud": 12.0,
         "umbral_warn": 51.0, "umbral_critico": 53.5,
+        "min_fisico": 0.0, "max_fisico": 120.0,
     },
 ]
 

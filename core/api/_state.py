@@ -111,6 +111,14 @@ _orch_service = OrchestratorService(
 # get_orquestador perezoso que _agent_service/_orch_service.
 _map_reduce_service = MapReduceService(get_orquestador=lambda: _orquestador)
 
+# Fase 23 (ADR-0021): Analista de Riesgos industrial-financiero (Gemelo
+# Digital) -- reusa el Map-Reduce para la evaluacion paralela cognitiva.
+from core.services.risk_analysis_service import RiskAnalysisService
+_risk_service = RiskAnalysisService(
+    get_orquestador=lambda: _orquestador,
+    map_reduce_service=_map_reduce_service,
+)
+
 
 def registrar_bridge(bridge: CommandBridge) -> None:
     """Inyecta un CommandBridge externo (p.ej. desde main.py en modo CLI+API)."""

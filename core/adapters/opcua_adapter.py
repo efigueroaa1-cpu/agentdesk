@@ -20,17 +20,21 @@ logger = logging.getLogger(__name__)
 
 # NodeIds típicos de un servidor OPC-UA de planta (ilustrativos)
 SENSORES: list[dict] = [
+    # min_fisico/max_fisico: rango de validez FISICA ([INDUSTRIAL-INTEGRITY],
+    # ADR-0021) — fuera de el, la lectura se descarta del Gemelo Digital.
     {
         "id": "nivel_estanque_1", "nombre": "Nivel Estanque 1",
         "node_id": "ns=2;s=Planta.Estanque1.Nivel", "unidad": "%",
         "base": 62.0, "amplitud": 22.0,
         "umbral_warn": 79.0, "umbral_critico": 83.0,
+        "min_fisico": 0.0, "max_fisico": 100.0,
     },
     {
         "id": "rpm_turbina_1", "nombre": "RPM Turbina 1",
         "node_id": "ns=2;s=Planta.Turbina1.RPM", "unidad": "rpm",
         "base": 3400.0, "amplitud": 260.0,
         "umbral_warn": 3600.0, "umbral_critico": 3650.0,
+        "min_fisico": 0.0, "max_fisico": 5000.0,
     },
 ]
 

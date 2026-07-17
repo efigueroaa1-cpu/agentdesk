@@ -98,7 +98,9 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # subio 700->748 (2026-07-16, ADR-0018): regla [DATA-HYGIENE]
     # subio 748->798 (2026-07-16, ADR-0019): regla [SCALE-LIMITS]
     # subio 798->808 (2026-07-16, ADR-0019): check_escalabilidad() (suite scale/)
-    "scripts/gate.py":                                                   808,
+    # subio 808->868 (2026-07-17, ADR-0021): regla [INDUSTRIAL-INTEGRITY]
+    # (validacion AST de rangos fisicos en catalogos SENSORES)
+    "scripts/gate.py":                                                   868,
     "dashboard.py":                                                     1257,
     "ui/dashboard.py":                                                  1257,
     # providers.py subio de <500 a 528 (2026-07-16, ADR-0017): generate_con_uso()
@@ -451,6 +453,63 @@ def check_scale_limits(archivos: list[str]) -> list[str]:
     return errores
 
 
+# Integridad industrial (Fase 23, ADR-0021): el Gemelo Digital razona sobre
+# la telemetria de planta — un sensor mapeado SIN rango de validez fisica
+# deja pasar lecturas imposibles (payload malicioso o sensor roto) como si
+# fueran datos legitimos: data poisoning directo a la Curva S ajustada y a
+# las alertas financieras. Los catalogos SENSORES son listas de literales,
+# asi que se validan por AST (preciso), no por regex.
+def check_industrial_integrity(archivos: list[str]) -> list[str]:
+    """
+    ADR-0021 [INDUSTRIAL-INTEGRITY]: todo sensor de un catalogo SENSORES
+    (core/adapters/*.py) debe declarar min_fisico y max_fisico validos
+    (min < max, numericos) — y base.py debe seguir aplicandolos.
+    """
+    import ast as _ast
+    errores = []
+    for rel in archivos:
+        if not (rel.startswith("core/adapters/") and rel.endswith(".py")):
+            continue
+        try:
+            arbol = _ast.parse("\n".join(leer(rel)))
+        except SyntaxError:
+            continue
+        for nodo in _ast.walk(arbol):
+            if not (isinstance(nodo, (_ast.Assign, _ast.AnnAssign))):
+                continue
+            objetivos = nodo.targets if isinstance(nodo, _ast.Assign) else [nodo.target]
+            if not any(isinstance(t, _ast.Name) and t.id == "SENSORES" for t in objetivos):
+                continue
+            if nodo.value is None or not isinstance(nodo.value, _ast.List):
+                continue
+            try:
+                sensores = _ast.literal_eval(nodo.value)
+            except ValueError:
+                continue
+            for s in sensores:
+                sid = s.get("id", "?")
+                minf, maxf = s.get("min_fisico"), s.get("max_fisico")
+                if not isinstance(minf, (int, float)) or not isinstance(maxf, (int, float)):
+                    errores.append(
+                        f"  [INDUSTRIAL-INTEGRITY] {rel}: sensor '{sid}' sin "
+                        f"min_fisico/max_fisico numericos -> data poisoning "
+                        f"posible en el Gemelo Digital (ADR-0021)"
+                    )
+                elif minf >= maxf:
+                    errores.append(
+                        f"  [INDUSTRIAL-INTEGRITY] {rel}: sensor '{sid}' con rango "
+                        f"fisico invalido (min {minf} >= max {maxf})"
+                    )
+    texto_base = "\n".join(leer("core/adapters/base.py"))
+    if "min_fisico" not in texto_base or "fuera_de_rango_fisico" not in texto_base:
+        errores.append(
+            "  [INDUSTRIAL-INTEGRITY] core/adapters/base.py: la validacion de "
+            "rango fisico (min_fisico -> fuera_de_rango_fisico) fue removida "
+            "-> los rangos declarados no se aplican a ninguna lectura real"
+        )
+    return errores
+
+
 def check_tests_adaptadores(archivos: list[str]) -> list[str]:
     """
     ADR-0004: cada adaptador industrial (core/adapters/<x>_adapter.py) debe
@@ -770,6 +829,7 @@ def main() -> int:
     errores += check_data_hygiene()
     errores += check_scale_limits(archivos)
     errores += check_escalabilidad()
+    errores += check_industrial_integrity(archivos)
     errores += check_tests_adaptadores(archivos)
     errores += check_bandit()
     errores += check_contrato_auth()
