@@ -105,7 +105,9 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # (validacion AST de rangos fisicos en catalogos SENSORES)
     # subio 868->978 (2026-07-17, ADR-0022): regla [DIST-INTEGRITY] (self-check
     # RSA + escaneo de control externo en fuente y binario) + check_onboarding
-    "scripts/gate.py":                                                   978,
+    # subio 978->1045 (2026-07-17, ADR-0023): regla [SEMANTIC-PRIVACY] (scope
+    # user_id+proyecto_id en llamadas Hermes por AST de parentesis) + suite memory
+    "scripts/gate.py":                                                  1045,
     "dashboard.py":                                                     1257,
     "ui/dashboard.py":                                                  1257,
     # providers.py subio de <500 a 528 (2026-07-16, ADR-0017): generate_con_uso()
@@ -763,7 +765,8 @@ def check_observabilidad_forense() -> list[str]:
 def check_hats() -> list[str]:
     """Fases 11/12: HATs (ContextHarness + CritiqueHarness) — best-effort."""
     return (_correr_suite("tests.harnesses.test_memoria_harness", "HAT")
-            + _correr_suite("tests.harnesses.test_autocritica_harness", "HAT"))
+            + _correr_suite("tests.harnesses.test_autocritica_harness", "HAT")
+            + _correr_suite("tests.harnesses.test_habilidades_harness", "HAT"))
 
 
 def check_fase13() -> list[str]:
@@ -895,6 +898,68 @@ def check_distribution_integrity(archivos: list[str]) -> list[str]:
     return errores
 
 
+# Privacidad semantica (Fase 25, ADR-0023): la Memoria Hermes es memoria
+# PERSISTENTE entre sesiones — una consulta sin scope completo seria una
+# fuga directa de conversaciones/know-how entre usuarios o proyectos.
+def check_semantic_privacy(archivos: list[str]) -> list[str]:
+    """
+    ADR-0023 [SEMANTIC-PRIVACY]:
+      1. Toda llamada a hermes().buscar()/guardar() en el codigo fuente
+         debe pasar user_id= y proyecto_id= explicitos en la MISMA llamada
+         (defensa en profundidad: la firma keyword-only ya lo exige en
+         runtime; esta regla impide que alguien agregue defaults).
+      2. core/vector_store.py debe conservar el fail-closed _exigir_scope
+         en guardar() y buscar().
+    """
+    errores = []
+    patron = re.compile(r"hermes\(\)\s*\.\s*(buscar|guardar)\s*\(")
+    for ruta in archivos:
+        if not ruta.endswith(".py") or ruta.replace("\\", "/").endswith("scripts/gate.py"):
+            continue
+        texto = "\n".join(leer(ruta))
+        for m in patron.finditer(texto):
+            # Ventana hasta el cierre de la llamada (balance de parentesis)
+            nivel, fin = 0, m.end()
+            for i in range(m.end() - 1, min(len(texto), m.end() + 1500)):
+                if texto[i] == "(":
+                    nivel += 1
+                elif texto[i] == ")":
+                    nivel -= 1
+                    if nivel == 0:
+                        fin = i
+                        break
+            llamada = texto[m.start():fin]
+            linea = texto[:m.start()].count("\n") + 1
+            for kw in ("user_id=", "proyecto_id="):
+                if kw not in llamada:
+                    errores.append(
+                        f"  [SEMANTIC-PRIVACY] {ruta}:{linea}: llamada a "
+                        f"Hermes .{m.group(1)}() sin {kw} explicito"
+                    )
+    guardas = sum(1 for l in leer("core/vector_store.py")
+                  if "_exigir_scope(user_id, proyecto_id)" in l)
+    if guardas < 2:
+        errores.append(
+            "  [SEMANTIC-PRIVACY] core/vector_store.py: el fail-closed "
+            "_exigir_scope debe aplicarse en guardar() Y buscar()"
+        )
+    return errores
+
+
+def check_memoria_hermes() -> list[str]:
+    """Fase 25: suite de Memoria Hermes (persistencia, aislamiento, skills)."""
+    proc = subprocess.run(
+        [sys.executable, "-m", "unittest", "discover", "-s", "tests/memory",
+         "-t", ".", "-p", "test_*.py"],
+        cwd=RAIZ, capture_output=True, text=True,
+    )
+    if proc.returncode == 0:
+        return []
+    detalle = (proc.stderr or proc.stdout or "").strip().splitlines()[-25:]
+    return ["  [HERMES] tests/memory FALLO:"] + \
+           [f"    {linea}" for linea in detalle]
+
+
 def check_onboarding() -> list[str]:
     """Fase 24: suite E2E del flujo de bienvenida (primer arranque offline)."""
     proc = subprocess.run(
@@ -959,6 +1024,8 @@ def main() -> int:
     errores += check_observabilidad_forense()
     errores += check_distribution_integrity(archivos)
     errores += check_onboarding()
+    errores += check_semantic_privacy(archivos)
+    errores += check_memoria_hermes()
 
     if errores:
         print(f"\nVIOLACIONES ({len(errores)}):")

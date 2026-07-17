@@ -18,7 +18,8 @@ from core.timeutil import utcnow
 from core import kill_switch
 import core.api._state as _state
 from core.api.schemas import (KillSwitchLicenciaRequest, KillSwitchToggleRequest,
-                              MapReduceRequest, UpdateURLRequest)
+                              MapReduceRequest, SkillExtraerRequest,
+                              UpdateURLRequest)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -197,6 +198,45 @@ async def auditoria_costos(req: Request, dias: int = 30) -> dict:
         raise HTTPException(403, detail="Se requiere rol supervisor o admin.")
     from core.services import audit_service
     return audit_service.resumen_costos(dias)
+
+
+@router.get("/skills")
+async def listar_skills(req: Request) -> dict:
+    """
+    Librería de Habilidades del usuario autenticado (ADR-0023). El scope
+    user_id sale del token — un usuario jamás ve habilidades de otro.
+    Requiere rol supervisor o admin (conocimiento operativo del sistema).
+    """
+    from core.auth import tiene_permiso
+    if not tiene_permiso(getattr(req.state, "rol", "viewer"), "supervisor"):
+        raise HTTPException(403, detail="Se requiere rol supervisor o admin.")
+    from core.services import skill_service
+    user_id = getattr(req.state, "user_id", "anonimo")
+    return {
+        "habilidades": skill_service.listar_habilidades(user_id),
+        "secuencias_candidatas": skill_service.identificar_secuencias(user_id),
+    }
+
+
+@router.post("/skills/extraer")
+async def extraer_skill(req: Request, payload: SkillExtraerRequest) -> dict:
+    """
+    Extrae una habilidad (receta reutilizable) de las secuencias exitosas
+    de la auditoría del usuario autenticado (ADR-0023). Supervisor o admin.
+    """
+    from core.auth import tiene_permiso
+    if not tiene_permiso(getattr(req.state, "rol", "viewer"), "supervisor"):
+        raise HTTPException(403, detail="Se requiere rol supervisor o admin.")
+    from core.services import skill_service
+    user_id = getattr(req.state, "user_id", "anonimo")
+    try:
+        receta = skill_service.extraer_habilidad(
+            payload.nombre, user_id,
+            secuencia=payload.secuencia, descripcion=payload.descripcion,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, detail=str(exc))
+    return {"ok": True, "habilidad": receta}
 
 
 @router.get("/health")
