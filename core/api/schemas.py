@@ -76,8 +76,8 @@ class PipelineConfigRequest(BaseModel):
     timeout_s:        float | None = None
 
 
-class KillSwitchURLRequest(BaseModel):
-    url: str = ""
+class KillSwitchLicenciaRequest(BaseModel):
+    contenido: str   # JSON completo de license.key (payload + firma RSA)
 
 
 class KillSwitchToggleRequest(BaseModel):

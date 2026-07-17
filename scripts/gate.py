@@ -18,6 +18,7 @@ Uso:  python scripts/gate.py     (lo invoca gate.ps1 como paso de arquitectura)
 """
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
@@ -49,7 +50,9 @@ LEGACY_OVERSIZE: dict[str, int] = {
     "agentdesk-dashboard/src/components/pipeline/ErrorPanel.jsx":        553,
     "agentdesk-dashboard/src/components/pipeline/PipelineControl.jsx":  1050,
     "agentdesk-dashboard/src/components/proyectos/ProyectosModule.jsx": 1127,
-    "agentdesk-dashboard/src/components/settings/SecurityPanel.jsx":     898,
+    # SecurityPanel subio 898->1413 (2026-07-17, ADR-0022): normalizacion
+    # prettier (nunca habia pasado por el linter) + seccion licencia RSA
+    "agentdesk-dashboard/src/components/settings/SecurityPanel.jsx":    1413,
     # core/api.py (2865->1552 lineas, ADR-0003/0007/0011/0014) se retiro de
     # esta tabla en la Fase 17 (ADR-0015): dejo de ser un archivo unico y
     # paso a ser el paquete core/api/ (un router por dominio, cada archivo
@@ -100,7 +103,9 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # subio 798->808 (2026-07-16, ADR-0019): check_escalabilidad() (suite scale/)
     # subio 808->868 (2026-07-17, ADR-0021): regla [INDUSTRIAL-INTEGRITY]
     # (validacion AST de rangos fisicos en catalogos SENSORES)
-    "scripts/gate.py":                                                   868,
+    # subio 868->978 (2026-07-17, ADR-0022): regla [DIST-INTEGRITY] (self-check
+    # RSA + escaneo de control externo en fuente y binario) + check_onboarding
+    "scripts/gate.py":                                                   978,
     "dashboard.py":                                                     1257,
     "ui/dashboard.py":                                                  1257,
     # providers.py subio de <500 a 528 (2026-07-16, ADR-0017): generate_con_uso()
@@ -801,6 +806,109 @@ def check_telemetria_industrial() -> list[str]:
            [f"    {linea}" for linea in detalle]
 
 
+# Integridad de distribucion (Fase 24, ADR-0022): la v1.0 Gold no puede
+# depender de recursos externos criticos. El kill switch por Gist era una
+# URL de control externa (punto unico de falla); la licencia RSA local la
+# reemplaza. Esta regla impide que el patron reaparezca — en el fuente o
+# ya compilado dentro del binario distribuido — y exige que la cadena
+# criptografica de licencias funcione de verdad (self-check real, no lint).
+_PATRONES_CONTROL_EXTERNO = ("KILL_SWITCH_GIST_URL", "gist.githubusercontent")
+
+
+def check_distribution_integrity(archivos: list[str]) -> list[str]:
+    """
+    ADR-0022 [DISTRIBUTION-INTEGRITY]:
+      1. Cero URLs de control externas: ningun archivo fuente puede
+         contener los patrones del mecanismo remoto retirado, y
+         core/kill_switch.py no puede volver a hacer red (urllib/httpx/
+         requests/socket prohibidos en ese modulo).
+      2. Self-check RSA real: par efimero -> firmar -> validar OK;
+         payload adulterado -> firma_invalida. Si la cadena de licencias
+         se rompe, el build no sale.
+      3. Si dist/AgentDesk/AgentDesk.exe existe, escanea el binario (cubre
+         recursos/config en claro; los .py viajan comprimidos en el PYZ —
+         la garantia dura es el escaneo de fuente + el self-check).
+    """
+    errores = []
+
+    # 1) Fuente sin patrones de control externo (este archivo se excluye:
+    #    define los patrones que busca)
+    for ruta in archivos:
+        if ruta.replace("\\", "/").endswith("scripts/gate.py"):
+            continue
+        for n, linea in enumerate(leer(ruta), 1):
+            if any(p in linea for p in _PATRONES_CONTROL_EXTERNO):
+                errores.append(
+                    f"  [DIST-INTEGRITY] {ruta}:{n}: patron de control "
+                    f"remoto externo prohibido (ADR-0022)"
+                )
+    for n, linea in enumerate(leer("core/kill_switch.py"), 1):
+        limpia = linea.split("#")[0]
+        if any(f"import {mod}" in limpia for mod in
+               ("urllib", "httpx", "requests", "socket")):
+            errores.append(
+                f"  [DIST-INTEGRITY] core/kill_switch.py:{n}: el kill "
+                f"switch debe ser 100% local — red prohibida (ADR-0022)"
+            )
+
+    # 2) Self-check criptografico de la cadena de licencias
+    import json as _json
+    import tempfile as _tempfile
+    sys.path.insert(0, str(RAIZ))
+    from core.services import license_service as _lic
+    pub_original = os.environ.get("AGENTDESK_LICENSE_PUB")
+    try:
+        priv, pub = _lic.generar_par_claves(bits=2048)
+        with _tempfile.NamedTemporaryFile("w", suffix=".pem", delete=False) as f:
+            f.write(pub)
+        os.environ["AGENTDESK_LICENSE_PUB"] = f.name
+        payload = {"machine_id": _lic.machine_id(), "emitida": "2026-07-17",
+                   "expira": None, "edicion": "gate-selfcheck"}
+        contenido = _json.dumps({"payload": payload,
+                                 "firma": _lic.firmar_payload(payload, priv)})
+        if not _lic.validar_licencia(contenido)["valida"]:
+            errores.append("  [DIST-INTEGRITY] self-check RSA: una licencia "
+                           "bien firmada NO valida — cadena rota")
+        adulterado = dict(payload, edicion="hacked")
+        contenido_mal = _json.dumps({"payload": adulterado,
+                                     "firma": _json.loads(contenido)["firma"]})
+        if _lic.validar_licencia(contenido_mal)["motivo"] != "firma_invalida":
+            errores.append("  [DIST-INTEGRITY] self-check RSA: un payload "
+                           "ADULTERADO paso la verificacion de firma")
+    finally:
+        if pub_original is None:
+            os.environ.pop("AGENTDESK_LICENSE_PUB", None)
+        else:
+            os.environ["AGENTDESK_LICENSE_PUB"] = pub_original
+        os.unlink(f.name)
+
+    # 3) Binario distribuido (si existe en esta maquina)
+    exe = RAIZ / "dist" / "AgentDesk" / "AgentDesk.exe"
+    if exe.exists():
+        contenido_exe = exe.read_bytes()
+        for patron in _PATRONES_CONTROL_EXTERNO:
+            if patron.encode("ascii") in contenido_exe:
+                errores.append(
+                    f"  [DIST-INTEGRITY] dist/AgentDesk/AgentDesk.exe "
+                    f"contiene '{patron}' — binario con control externo"
+                )
+    return errores
+
+
+def check_onboarding() -> list[str]:
+    """Fase 24: suite E2E del flujo de bienvenida (primer arranque offline)."""
+    proc = subprocess.run(
+        [sys.executable, "-m", "unittest", "discover", "-s", "tests/e2e",
+         "-t", ".", "-p", "test_*.py"],
+        cwd=RAIZ, capture_output=True, text=True,
+    )
+    if proc.returncode == 0:
+        return []
+    detalle = (proc.stderr or proc.stdout or "").strip().splitlines()[-25:]
+    return ["  [ONBOARDING] tests/e2e FALLO:"] + \
+           [f"    {linea}" for linea in detalle]
+
+
 def _correr_suite(modulo: str, etiqueta: str) -> list[str]:
     proc = subprocess.run(
         [sys.executable, "-m", "unittest", modulo],
@@ -849,6 +957,8 @@ def main() -> int:
     errores += check_persistencia_dual()
     errores += check_observabilidad(archivos)
     errores += check_observabilidad_forense()
+    errores += check_distribution_integrity(archivos)
+    errores += check_onboarding()
 
     if errores:
         print(f"\nVIOLACIONES ({len(errores)}):")
