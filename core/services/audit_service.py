@@ -122,6 +122,7 @@ def registrar_interaccion(
     guardrails: list[dict] | None = None,   # veredicto de CADA guardrail evaluado
     duracion_s: float | None = None,
     exitoso: bool = True,
+    proyecto_id: str = "",           # ambito Hermes (ADR-0023); "" = global
     tokens_reales: dict | None = None,   # {"tokens_total", "tokens_exactos"} — Fase 19
 ) -> int | None:
     """Persiste una traza de auditoría forense completa. Retorna el id, o None si falló."""
@@ -183,6 +184,22 @@ def registrar_interaccion(
                   costo_usd=costo_usd, proveedor=proveedor, duracion_s=duracion_s)
     except Exception as exc:
         logger.warning("AUDITORIA_IA: metricas Prometheus no actualizadas (%s)", exc)
+
+    # Memoria Hermes (Fase 25, ADR-0023): las interacciones exitosas se
+    # siembran en la memoria vectorial persistente para recuerdo entre
+    # sesiones. Best-effort independiente, mismo principio que Prometheus.
+    if exitoso and prompt and respuesta:
+        try:
+            from core.vector_store import PROYECTO_GLOBAL, hermes
+            hermes().guardar(
+                f"Pregunta: {prompt[:600]}\nRespuesta: {respuesta[:1200]}",
+                user_id=(user_id or "anonimo")[:64],
+                proyecto_id=(proyecto_id or PROYECTO_GLOBAL)[:64],
+                agente_id=(agente_id or "")[:64],
+                tipo="interaccion",
+            )
+        except Exception as exc:
+            logger.warning("AUDITORIA_IA: memoria Hermes no sembrada (%s)", exc)
 
     return _id
 

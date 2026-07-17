@@ -19,23 +19,26 @@ import re
 
 logger = logging.getLogger(__name__)
 
+from core.vector_store import PROYECTO_GLOBAL
+
 PRESUPUESTO_TOKENS_DEFAULT = 400   # ~1600 chars (tokens ~= chars/4, ADR-0007)
 CANDIDATOS_MAX = 30                 # trazas de auditoria a considerar por consulta
 
 
 class ContextHarness:
     """
-    HAT de Memoria de Corto Plazo: RAG ligero sobre `auditoria_ia`.
+    HAT de Memoria: RAG sobre la Memoria Hermes persistente (ADR-0023) con
+    la auditoría como complemento de transición.
 
-    En el hook 'pre' recupera fragmentos de conversaciones PASADAS del mismo
-    agente Y DEL MISMO USUARIO (sesiones distintas a la actual — la memoria
-    de sesión en curso ya la cubre core/memory.py) mediante similitud TF-IDF
-    contra el mensaje entrante, e inyecta solo los fragmentos relevantes bajo
-    un presupuesto de tokens.
+    En el hook 'pre' recupera recuerdos de sesiones PASADAS del mismo
+    usuario (la memoria de la sesión en curso ya la cubre core/memory.py)
+    por similitud vectorial contra el mensaje entrante, y los inyecta tras
+    la poda de contexto dinámico (podar_fragmentos: relevancia + no
+    redundancia + presupuesto de tokens, FinOps).
 
-    ADR-0010: el filtro por user_id es OBLIGATORIO. Sin un user_id explícito
-    en el contexto, no se hace ninguna consulta — nunca se cae de vuelta a
-    "todos los usuarios de este agente" como aproximación.
+    ADR-0010/0023: user_id y proyecto_id son OBLIGATORIOS en Hermes
+    (fail-closed). Sin user_id no hay memoria de ninguna fuente — nunca se
+    cae de vuelta a "todos los usuarios de este agente".
     """
 
     nombre = "memoria"
@@ -51,6 +54,41 @@ class ContextHarness:
     def detach(self) -> None:
         self._agente_id = None
 
+    def _recuerdos_hermes(self, mensaje: str, agente_id: str,
+                          user_id: str, proyecto_id: str) -> list[tuple[str, float]]:
+        """Memoria vectorial persistente (sobrevive reinicios y sesiones)."""
+        from core.vector_store import hermes
+        import time as _time
+        resultados = hermes().buscar(
+            mensaje, user_id=user_id, proyecto_id=proyecto_id,
+            agente_id=agente_id or None, top_k=8,
+        )
+        fragmentos = []
+        for r in resultados:
+            dias = max(0, int((_time.time() - r["ts"]) / 86400))
+            cuando = f"hace {dias} dia(s)" if dias else "hoy"
+            fragmentos.append(
+                (f"- Recuerdo ({cuando}): {r['texto'][:400]}", r["similitud"]))
+        return fragmentos
+
+    def _recuerdos_auditoria(self, mensaje: str, agente_id: str,
+                             user_id: str) -> list[tuple[str, float]]:
+        """Complemento de transición: TF-IDF efímero sobre auditoria_ia."""
+        from core.services.audit_service import consultar
+        from core.embeddings import recuperar_contexto_similar
+
+        trazas = consultar(agente_id=agente_id, user_id=user_id, limit=CANDIDATOS_MAX)
+        trazas = [t for t in trazas if t.get("prompt") and t.get("respuesta")]
+        if not trazas:
+            return []
+        candidatos = [f"{t['prompt']} {t['respuesta']}" for t in trazas]
+        ranking = recuperar_contexto_similar(mensaje, candidatos, top_k=5)
+        return [
+            (f"- Antes preguntaste: \"{trazas[i]['prompt'][:200]}\" "
+             f"-> respondí: \"{trazas[i]['respuesta'][:200]}\"", sim)
+            for i, sim in ranking
+        ]
+
     async def apply_hooks(self, fase: str, contexto: dict) -> dict:
         if fase != "pre":
             return contexto   # ContextHarness no hace post-procesamiento
@@ -58,6 +96,7 @@ class ContextHarness:
         mensaje   = contexto.get("mensaje", "")
         agente_id = self._agente_id or contexto.get("agente_id", "")
         user_id   = contexto.get("user_id")
+        proyecto_id = contexto.get("proyecto_id") or PROYECTO_GLOBAL
         if not mensaje or not agente_id:
             return contexto
         if not user_id:
@@ -65,35 +104,72 @@ class ContextHarness:
                             "memoria denegada (fail-closed, ADR-0010)")
             return contexto
 
-        from core.services.audit_service import consultar
-        from core.embeddings import recuperar_contexto_similar
+        from core.embeddings import podar_fragmentos
 
-        trazas = consultar(agente_id=agente_id, user_id=user_id, limit=CANDIDATOS_MAX)
-        trazas = [t for t in trazas if t.get("prompt") and t.get("respuesta")]
-        if not trazas:
-            return contexto
-
-        candidatos = [f"{t['prompt']} {t['respuesta']}" for t in trazas]
-        ranking = recuperar_contexto_similar(mensaje, candidatos, top_k=5)
-        if not ranking:
-            return contexto
-
-        limite_chars = self._presupuesto * 4
-        fragmentos: list[str] = []
-        total = 0
-        for idx, _sim in ranking:
-            t    = trazas[idx]
-            frag = (f"- Antes preguntaste: \"{t['prompt'][:200]}\" "
-                    f"-> respondí: \"{t['respuesta'][:200]}\"")
-            if total + len(frag) > limite_chars:
-                break
-            fragmentos.append(frag)
-            total += len(frag)
+        # Hermes primero (persistente); auditoría como complemento. Se
+        # concatenan en ese orden — podar_fragmentos elimina redundancias
+        # (una interacción reciente suele estar en ambas fuentes).
+        candidatos = self._recuerdos_hermes(mensaje, agente_id, user_id, proyecto_id)
+        candidatos += self._recuerdos_auditoria(mensaje, agente_id, user_id)
+        fragmentos = podar_fragmentos(candidatos, self._presupuesto)
 
         if fragmentos:
             contexto["memoria_semantica"] = (
                 "Recuerdos relevantes de conversaciones anteriores:\n"
                 + "\n".join(fragmentos)
+            )
+        return contexto
+
+
+class SkillHarness:
+    """
+    HAT de Habilidades (ADR-0023): recupera de la Memoria Hermes las
+    recetas (tipo="habilidad") relevantes al mensaje entrante y las
+    inyecta como procedimiento sugerido. Scope estricto user_id +
+    proyecto_id — las habilidades son know-how del usuario que las
+    aprendió, jamás se comparten entre usuarios (SEMANTIC-PRIVACY).
+    """
+
+    nombre = "habilidades"
+
+    def __init__(self) -> None:
+        self._agente_id: str | None = None
+
+    def attach(self, agente_id: str, config: dict) -> None:
+        self._agente_id = agente_id
+
+    def detach(self) -> None:
+        self._agente_id = None
+
+    async def apply_hooks(self, fase: str, contexto: dict) -> dict:
+        if fase != "pre":
+            return contexto
+
+        mensaje = contexto.get("mensaje", "")
+        user_id = contexto.get("user_id")
+        proyecto_id = contexto.get("proyecto_id") or PROYECTO_GLOBAL
+        if not mensaje or not user_id:
+            return contexto   # fail-closed: sin user_id no hay habilidades
+
+        from core.services import skill_service
+        from core.vector_store import hermes
+
+        coincidencias = hermes().buscar(
+            mensaje, user_id=user_id, proyecto_id=proyecto_id,
+            tipo="habilidad", top_k=2, umbral=0.15,
+        )
+        piezas: list[str] = []
+        for c in coincidencias:
+            # El texto indexado empieza "Habilidad: <nombre>. ..." — se
+            # recupera la receta completa desde disco por su nombre.
+            for receta in skill_service.listar_habilidades(user_id):
+                if receta.get("nombre") and receta["nombre"] in c["texto"]:
+                    piezas.append(skill_service.como_prompt(receta))
+                    break
+        if piezas:
+            contexto["habilidades"] = (
+                "Habilidades aprendidas aplicables a esta tarea:\n"
+                + "\n".join(dict.fromkeys(piezas))   # dedupe conservando orden
             )
         return contexto
 
@@ -205,6 +281,7 @@ class HarnessService:
     _REGISTRO: dict[str, type] = {
         "memoria":     ContextHarness,
         "autocritica": CritiqueHarness,
+        "habilidades": SkillHarness,
     }
 
     def _instanciar(self, nombres: list[str]) -> list:
@@ -220,6 +297,7 @@ class HarnessService:
     async def aplicar_pre(
         self, nombres: list[str], agente_id: str, mensaje: str,
         user_id: str = "anonimo", config: dict | None = None,
+        proyecto_id: str = PROYECTO_GLOBAL,
     ) -> str:
         """Aplica el hook 'pre' de cada harness configurado; retorna el texto a inyectar."""
         if not nombres:
@@ -229,11 +307,13 @@ class HarnessService:
             try:
                 harness.attach(agente_id, config or {})
                 resultado = await harness.apply_hooks(
-                    "pre", {"agente_id": agente_id, "mensaje": mensaje, "user_id": user_id},
+                    "pre", {"agente_id": agente_id, "mensaje": mensaje,
+                            "user_id": user_id, "proyecto_id": proyecto_id},
                 )
-                extra = resultado.get("memoria_semantica")
-                if extra:
-                    piezas.append(extra)
+                for clave in ("memoria_semantica", "habilidades"):
+                    extra = resultado.get(clave)
+                    if extra:
+                        piezas.append(extra)
             except Exception as exc:
                 logger.warning("HATs: harness '%s' fallo en pre-hook (%s) — ignorado",
                                getattr(harness, "nombre", "?"), exc)
