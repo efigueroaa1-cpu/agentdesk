@@ -80,6 +80,12 @@ class KillSwitchLicenciaRequest(BaseModel):
     contenido: str   # JSON completo de license.key (payload + firma RSA)
 
 
+class SkillExtraerRequest(BaseModel):
+    nombre:      str
+    descripcion: str = ""
+    secuencia:   list[str] | None = None   # None → la más frecuente del minado
+
+
 class KillSwitchToggleRequest(BaseModel):
     activo: bool
 

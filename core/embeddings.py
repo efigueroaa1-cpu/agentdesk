@@ -1,16 +1,15 @@
 """
-core/embeddings.py — Embeddings semánticos reales con TF-IDF + PCA.
+core/embeddings.py — Embeddings semánticos: TF-IDF + PCA (mapa 3D) y
+poda de contexto FinOps (Fase 25, ADR-0023).
 
-En lugar de posiciones matemáticas ficticias, calcula posiciones 3D
-basadas en el contenido real de los agentes:
-  - prompt_base (instrucción del rol)
-  - nombre + área
-  - historial de tareas ejecutadas
+Mapa 3D de agentes: posiciones basadas en el contenido real
+(prompt_base, nombre + área, historial). Agentes similares → cercanos.
 
-Agentes similares (mismo dominio, misma área, prompts parecidos) → cercanos en 3D.
-Agentes distintos → separados en 3D.
-
-No requiere modelos de ML pesados — usa TF-IDF + PCA de scikit-learn (~30 MB).
+Desde la Fase 25 la memoria PERSISTENTE vive en core/vector_store.py
+(Memoria Hermes, %APPDATA%); este módulo conserva el TF-IDF efímero del
+mapa 3D y aporta `podar_fragmentos()`: la poda de contexto dinámico que
+garantiza que el prompt solo lleve los recuerdos más relevantes y no
+redundantes bajo un presupuesto de tokens (FinOps, ADR-0017).
 """
 from __future__ import annotations
 import logging
@@ -237,6 +236,41 @@ def recuperar_contexto_similar(query: str, candidatos: list[str], top_k: int = 3
         umbral = similitudes[0][1] * 0.2
         similitudes = [(i, s) for i, s in similitudes if s >= umbral]
     return similitudes[:max(1, top_k)]
+
+
+def podar_fragmentos(
+    fragmentos: list[tuple[str, float]],
+    presupuesto_tokens: int,
+    umbral_redundancia: float = 0.8,
+) -> list[str]:
+    """
+    Poda de contexto dinámico (FinOps, ADR-0023): de una lista de
+    (texto, similitud) YA ordenada por relevancia descendente, selecciona
+    greedy los fragmentos que caben en el presupuesto de tokens
+    (tokens ~= chars/4, ADR-0007), descartando los REDUNDANTES: un
+    fragmento cuyo solape Jaccard de tokens con uno ya elegido supere el
+    umbral no aporta información nueva — solo quema tokens.
+    """
+    limite_chars = max(presupuesto_tokens, 0) * 4
+    elegidos: list[str] = []
+    vocabularios: list[set[str]] = []
+    total = 0
+    for texto, _sim in fragmentos:
+        if not texto:
+            continue
+        if total + len(texto) > limite_chars:
+            continue   # el siguiente (más corto) aún puede caber
+        tokens = set(texto.lower().split())
+        redundante = any(
+            len(tokens & previo) / (len(tokens | previo) or 1) >= umbral_redundancia
+            for previo in vocabularios
+        )
+        if redundante:
+            continue
+        elegidos.append(texto)
+        vocabularios.append(tokens)
+        total += len(texto)
+    return elegidos
 
 
 def _posiciones_fallback(agentes: list[dict]) -> list[dict]:
