@@ -58,7 +58,9 @@ RUTAS_PUBLICAS_AUTORIZADAS: frozenset[tuple[str, str]] = frozenset({
     ("PUT",   "/alertas/config"),
     # Infraestructura local
     ("POST", "/kill-switch/toggle"),
-    ("POST", "/kill-switch/url"),
+    # Fase 24 (ADR-0022): /kill-switch/url (Gist remoto) eliminado; la
+    # licencia RSA local exige rol admin DENTRO del handler (tiene_permiso).
+    ("POST", "/kill-switch/licencia"),
     ("PUT",  "/update/url"),
     # Map-Reduce (Fase 21, ADR-0019): RBAC supervisor+ dentro del handler
     # (dispara N llamadas reales a LLM, mismo criterio que /auditoria/*)
