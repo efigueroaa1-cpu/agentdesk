@@ -17,7 +17,7 @@ from starlette.requests import Request
 from core.timeutil import utcnow
 from core import kill_switch
 import core.api._state as _state
-from core.api.schemas import (KillSwitchToggleRequest, KillSwitchURLRequest,
+from core.api.schemas import (KillSwitchLicenciaRequest, KillSwitchToggleRequest,
                               MapReduceRequest, UpdateURLRequest)
 
 logger = logging.getLogger(__name__)
@@ -229,8 +229,8 @@ async def get_embeddings() -> dict:
 @router.get("/kill-switch")
 async def estado_kill_switch() -> dict:
     """
-    Retorna el estado actual del kill switch (incluye gist_url para la UI).
-    El monitor de background actualiza el estado cada 5 minutos.
+    Retorna el estado actual del kill switch (licencia RSA local, ADR-0022).
+    El monitor de background re-valida license.key cada 5 minutos.
     """
     return kill_switch.estado_dict()
 
@@ -240,25 +240,29 @@ async def toggle_kill_switch(payload: KillSwitchToggleRequest) -> dict:
     """
     Activa o bloquea el Kill Switch manualmente desde el SecurityPanel.
     Requiere rol admin (verificado por JWTMiddleware).
-    El monitor del Gist puede sobreescribir este estado en la siguiente verificación.
+    Una licencia presente es autoritativa: el monitor re-evalua license.key
+    en la siguiente verificación y puede sobreescribir este estado.
     """
     kill_switch.forzar_estado(payload.activo)
     logger.info("Kill switch toggled a %s via API.", payload.activo)
     return kill_switch.estado_dict()
 
 
-@router.post("/kill-switch/url")
-async def configurar_kill_switch_url(payload: KillSwitchURLRequest) -> dict:
+@router.post("/kill-switch/licencia")
+async def instalar_licencia(req: Request, payload: KillSwitchLicenciaRequest) -> dict:
     """
-    Actualiza la URL del Gist de Kill Switch en tiempo de ejecucion.
-    Requiere JWT con rol admin (protegido por JWTMiddleware).
-    Si url es vacia, desactiva el control remoto.
+    Instala una licencia RSA local (ADR-0022): valida firma + machine_id +
+    vigencia ANTES de persistir en license.key; una licencia invalida se
+    rechaza sin escribir. Requiere rol admin — instalar una licencia cambia
+    el estado de activacion de todo el sistema.
     """
-    kill_switch.set_gist_url(payload.url)
-    if payload.url:
-        resultado = await kill_switch.verificar_gist()
-        return {"ok": True, "url": payload.url, "active": resultado}
-    return {"ok": True, "url": "", "active": True, "nota": "Control remoto desactivado."}
+    from core.auth import tiene_permiso
+    if not tiene_permiso(getattr(req.state, "rol", "viewer"), "admin"):
+        raise HTTPException(403, detail="Se requiere rol admin.")
+    veredicto = kill_switch.instalar_licencia(payload.contenido)
+    if not veredicto["valida"]:
+        raise HTTPException(400, detail=f"Licencia rechazada: {veredicto['motivo']}")
+    return kill_switch.estado_dict()
 
 
 @router.get("/sistema/salud")

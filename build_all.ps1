@@ -49,6 +49,35 @@ function OK    { param([string]$M) Write-Host "    OK: $M" -ForegroundColor Gree
 function Warn  { param([string]$M) Write-Host "    AVISO: $M" -ForegroundColor Yellow }
 function Fail  { param([string]$M) Write-Host "`n    ERROR: $M" -ForegroundColor Red; exit 1 }
 
+# ── Firma de codigo Authenticode (Fase 24, ADR-0022) ─────────────────────────────
+# Sin certificado configurado el build sigue (placeholder), pero SmartScreen
+# mostrara la advertencia "editor desconocido" en el instalador NSIS.
+# Configurar (certificado EV o OV .pfx):
+#   $env:AGENTDESK_SIGN_CERT = "C:\ruta\certificado.pfx"
+#   $env:AGENTDESK_SIGN_PASS = "<clave del .pfx>"
+function Sign-Artifact {
+    param([string]$Path)
+    if (-not $env:AGENTDESK_SIGN_CERT) {
+        Warn "Firma de codigo OMITIDA para $(Split-Path $Path -Leaf) (AGENTDESK_SIGN_CERT no configurada)."
+        Warn "SmartScreen mostrara 'editor desconocido' hasta firmar con un certificado EV/OV."
+        return
+    }
+    if (-not (Test-Path $env:AGENTDESK_SIGN_CERT)) {
+        Fail "AGENTDESK_SIGN_CERT apunta a un archivo inexistente: $env:AGENTDESK_SIGN_CERT"
+    }
+    $signtool = Get-Command signtool.exe -ErrorAction SilentlyContinue
+    if (-not $signtool) {
+        # Ubicacion tipica del Windows SDK
+        $sdk = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" -ErrorAction SilentlyContinue |
+            Sort-Object FullName -Descending | Select-Object -First 1
+        if ($sdk) { $signtool = $sdk.FullName } else { Fail "signtool.exe no encontrado (instala el Windows SDK)." }
+    } else { $signtool = $signtool.Source }
+    & $signtool sign /f $env:AGENTDESK_SIGN_CERT /p $env:AGENTDESK_SIGN_PASS `
+        /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $Path
+    if ($LASTEXITCODE -ne 0) { Fail "signtool fallo firmando $Path" }
+    OK "Firmado Authenticode: $(Split-Path $Path -Leaf)"
+}
+
 # ── Verificar prerequisitos ───────────────────────────────────────────────────────
 Step "Verificando prerequisitos..."
 try { $null = (Get-Command node -ErrorAction Stop); OK "Node.js: $((node --version))" } catch { Fail "Node.js no encontrado. Instala desde nodejs.org" }
@@ -133,6 +162,9 @@ if (-not $SkipPython) {
     OK "Backend compilado: AgentDesk.exe ($($exeSize.ToString('F1')) MB)"
     OK "Directorio completo: $DistDir"
 
+    # Firmar el backend ANTES de copiarlo a recursos Tauri (ADR-0022)
+    Sign-Artifact "$DistDir\AgentDesk.exe"
+
     # Copiar output de PyInstaller a recursos de Tauri
     Step "Copiando backend a recursos Tauri..."
     if (Test-Path $Resources) { Remove-Item $Resources -Recurse -Force }
@@ -156,6 +188,8 @@ if (-not $SkipTauri) {
         $newName = [System.IO.Path]::GetFileNameWithoutExtension($installer.Name) + "_$TS.exe"
         $dest    = Join-Path $Root $newName
         Copy-Item $installer.FullName $dest
+        # Firmar el instalador NSIS — es lo que SmartScreen evalua al descargar (ADR-0022)
+        Sign-Artifact $dest
         OK "Instalador: $newName ($([Math]::Round($installer.Length/1MB,1)) MB)"
         OK "Copiado a: $dest"
     } else {

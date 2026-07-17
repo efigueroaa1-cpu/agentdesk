@@ -1,7 +1,7 @@
 # Runtime hook PyInstaller: carga .env desde el directorio del exe.
 # Se ejecuta ANTES de cualquier importacion del programa principal.
 # Garantiza que os.environ tenga todas las variables (MASTER_PASSWORD_HASH,
-# API keys, KILL_SWITCH_GIST_URL, etc.) independientemente del cwd.
+# API keys, AGENTDESK_JWT_SECRET, etc.) independientemente del cwd.
 import sys
 import os
 from pathlib import Path

@@ -1,38 +1,37 @@
 """
-Kill Switch — control de activacion remoto via Gist de GitHub.
+Kill Switch — activacion por licencia RSA LOCAL (Fase 24, ADR-0022).
 
-El Gist debe exponer un JSON con al menos: { "active": true }
-Si "active" es false el sistema bloquea la ejecucion de todos los agentes.
+Historia: hasta la Fase 23 este modulo consultaba una URL remota de
+GitHub — un punto unico de falla y una URL de control externa
+incompatible con el modo offline total. Desde ADR-0022 la fuente
+de verdad es license.key (firma RSA + machine_id), validada por
+core.services.license_service sin tocar la red jamas.
 
-Env var:
-    KILL_SWITCH_GIST_URL  — URL raw del Gist (omitir para desactivar el control)
+Politica (Zero-Default, coherente con ADR-0016):
+  - SIN license.key           → sistema ACTIVO (modo desktop libre; la
+                                ausencia es un estado valido zero-config).
+  - licencia valida           → sistema ACTIVO  (fuente "licencia").
+  - licencia presente INVALIDA→ sistema BLOQUEADO (firma rota, otra
+                                maquina o expirada = manipulacion).
+  - forzar_estado() manual    → override del admin via UI; el monitor lo
+                                re-evalua contra la licencia cada 5 min.
 
-La URL tambien puede actualizarse en tiempo de ejecucion via set_gist_url().
-
-Politica ante fallos de red: fail-open.
-  El estado inicial es "activo" para no bloquear el arranque sin conectividad.
-  Si la ultima verificacion exitosa fue "active": false y la red cae,
-  el estado bloqueado se mantiene hasta que el Gist vuelva a responder.
+La API publica conserva los nombres que consumen agent_service,
+orchestrator_service, sistema_router y main.py: is_active(),
+estado_dict(), forzar_estado(), iniciar_monitor().
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-import os
 import time
-import urllib.request
-from dotenv import load_dotenv
 
-load_dotenv()
+from core.services import license_service
 
 logger = logging.getLogger(__name__)
 
-# URL mutable en tiempo de ejecucion
-_gist_url: str = os.environ.get("KILL_SWITCH_GIST_URL", "")
-_TIMEOUT_S:   float = 5.0
-_INTERVALO_S: float = 300.0   # 5 minutos entre verificaciones
+_INTERVALO_S: float = 300.0   # 5 minutos entre re-validaciones
 
 
 class _Estado:
@@ -43,6 +42,8 @@ class _Estado:
     """
     activo:          bool         = True
     fuente:          str          = "default"
+    motivo:          str          = "sin_licencia"
+    licencia:        dict | None  = None
     ts_verificacion: float | None = None
 
 
@@ -56,88 +57,75 @@ def is_active() -> bool:
     return _estado.activo
 
 
-def get_gist_url() -> str:
-    """Devuelve la URL del Gist actualmente configurada."""
-    return _gist_url
-
-
-def set_gist_url(url: str) -> None:
-    """
-    Actualiza la URL del Gist en tiempo de ejecucion.
-    Si la URL esta vacia, desactiva el control remoto (sistema siempre activo).
-    """
-    global _gist_url
-    _gist_url = url.strip()
-    if _gist_url:
-        logger.info("Kill switch URL actualizada: %s", _gist_url)
-    else:
-        _estado.activo = True
-        _estado.fuente = "default"
-        logger.info("Kill switch URL eliminada — control remoto desactivado.")
-
-
 def estado_dict() -> dict:
     """Estado completo serializable para el endpoint GET /kill-switch."""
+    lic = _estado.licencia or {}
+    payload = lic.get("payload") or {}
     return {
         "active":                 _estado.activo,
         "fuente":                 _estado.fuente,
+        "motivo":                 _estado.motivo,
         "ts_ultima_verificacion": _estado.ts_verificacion,
-        "gist_configurado":       bool(_gist_url),
-        "gist_url":               _gist_url,
+        "licencia_presente":      bool(lic.get("presente")),
+        "licencia_valida":        bool(lic.get("valida")),
+        "edicion":                payload.get("edicion"),
+        "expira":                 payload.get("expira"),
+        "machine_id":             license_service.machine_id(),
     }
 
 
-# ── Descarga del Gist ──────────────────────────────────────────────────────────
-
-def _fetch_sync(url: str) -> bool:
+def validar_ahora() -> bool:
     """
-    Descarga la URL del Gist de forma sincrona y retorna el campo 'active'.
-    Usar dentro de asyncio.to_thread() para no bloquear el event loop.
+    Re-evalua license.key de forma sincrona y actualiza el estado.
+    Es el chequeo pre-arranque de main.py (--api) y el cuerpo del monitor.
+    Cero red: solo disco + criptografia local.
     """
-    if not url.lower().startswith(("http://", "https://")):
-        raise ValueError(f"Esquema de URL no permitido para el Gist: {url[:40]}")
-    req = urllib.request.Request(url, headers={"Accept": "application/json"})
-    with urllib.request.urlopen(req, timeout=_TIMEOUT_S) as resp:  # nosec B310 - esquema validado arriba
-        data = json.loads(resp.read())
-    return bool(data.get("active", True))
+    veredicto = license_service.validar_licencia()
+    _estado.licencia        = veredicto
+    _estado.motivo          = veredicto["motivo"]
+    _estado.ts_verificacion = time.time()
 
-
-async def verificar_gist() -> bool | None:
-    """
-    Consulta el Gist de forma asincrona.
-    Retorna el nuevo estado (True/False), o None si la red fallo.
-    En caso de fallo de red el estado anterior se conserva.
-    """
-    url = _gist_url
-    if not url:
-        return None
-
-    try:
-        nuevo = await asyncio.to_thread(_fetch_sync, url)
-        _estado.activo          = nuevo
-        _estado.fuente          = "gist"
-        _estado.ts_verificacion = time.time()
-
-        nivel = logging.INFO if nuevo else logging.WARNING
-        logger.log(nivel, "Kill switch verificado", extra={"active": nuevo, "fuente": "gist"})
-        if not nuevo:
-            logger.warning("KILL SWITCH ACTIVADO — ejecucion de agentes bloqueada.")
-        return nuevo
-
-    except Exception as exc:
-        _estado.fuente = "cache"
+    if not veredicto["presente"]:
+        # Sin licencia no hay fuente autoritativa: un override manual del
+        # admin (toggle) persiste — mismo comportamiento que el gist ausente.
+        if _estado.fuente != "manual":
+            _estado.activo = True
+            _estado.fuente = "default"
+    elif veredicto["valida"]:
+        _estado.activo = True
+        _estado.fuente = "licencia"
+    else:
+        _estado.activo = False
+        _estado.fuente = "licencia_invalida"
         logger.warning(
-            "Kill switch — Gist inalcanzable; estado mantenido (%s). Causa: %s",
-            _estado.activo, exc,
+            "AUDITORIA_SEGURIDAD: KILL SWITCH ACTIVADO — licencia presente "
+            "pero invalida (motivo=%s); ejecucion de agentes bloqueada.",
+            veredicto["motivo"],
         )
-        return None
+    return _estado.activo
+
+
+async def verificar_licencia() -> bool:
+    """Version async de validar_ahora() (RSA + disco via to_thread)."""
+    return await asyncio.to_thread(validar_ahora)
+
+
+def instalar_licencia(contenido: str) -> dict:
+    """
+    Valida y persiste una licencia nueva (endpoint POST /kill-switch/licencia),
+    y re-evalua el estado de inmediato — activar una licencia no requiere
+    reiniciar. Una licencia invalida se rechaza SIN escribir ni cambiar estado.
+    """
+    veredicto = license_service.guardar_licencia(contenido)
+    if veredicto["valida"]:
+        validar_ahora()
+    return veredicto
 
 
 def forzar_estado(activo: bool) -> None:
     """
-    Fuerza el estado del kill switch manualmente.
-    El monitor lo sobreescribirá en la próxima verificación del Gist (cada 5 min).
-    Usar desde el endpoint POST /kill-switch/toggle.
+    Fuerza el estado del kill switch manualmente (POST /kill-switch/toggle).
+    El monitor lo re-evaluara contra la licencia en la proxima verificacion.
     """
     _estado.activo          = activo
     _estado.fuente          = "manual"
@@ -148,21 +136,15 @@ def forzar_estado(activo: bool) -> None:
 
 async def iniciar_monitor(intervalo_s: float = _INTERVALO_S) -> None:
     """
-    Tarea background: verifica el Gist periodicamente.
+    Tarea background: re-valida license.key periodicamente (detecta
+    licencias instaladas/borradas/expiradas en caliente sin reiniciar).
     Lanzar con asyncio.create_task(); se cancela limpiamente al salir.
-    Si la URL cambia via set_gist_url(), la proxima iteracion la usa.
     """
-    if not _gist_url:
-        logger.info(
-            "Kill switch: KILL_SWITCH_GIST_URL no configurada — "
-            "control remoto desactivado (sistema siempre activo)."
-        )
-
-    logger.info("Kill switch monitor iniciado (intervalo=%ds).", int(intervalo_s))
+    logger.info("Kill switch monitor iniciado (licencia local, intervalo=%ds).",
+                int(intervalo_s))
     try:
         while True:
-            if _gist_url:
-                await verificar_gist()
+            await verificar_licencia()
             await asyncio.sleep(intervalo_s)
     except asyncio.CancelledError:
         logger.info("Kill switch monitor: tarea cancelada limpiamente.")

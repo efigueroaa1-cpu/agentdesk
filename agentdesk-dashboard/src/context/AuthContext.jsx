@@ -29,8 +29,8 @@ export function AuthProvider({ children }) {
         if (data && data.active === false) {
           setIsKilled(true);
           setKillMsg(
-            data.fuente === "gist"
-              ? "Sistema desactivado remotamente. Contacta al administrador."
+            data.fuente === "licencia_invalida"
+              ? `Licencia inválida (${data.motivo}). Contacta al administrador.`
               : "Sistema bloqueado. Contacta al administrador.",
           );
         }

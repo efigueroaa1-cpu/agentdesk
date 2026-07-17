@@ -147,7 +147,7 @@ async def startup() -> None:
     _state._tarea_monitor = asyncio.create_task(kill_switch.iniciar_monitor())
 
     # Verificación inmediata (no espera el primer intervalo de 5 min)
-    await kill_switch.verificar_gist()
+    await kill_switch.verificar_licencia()
 
     # Alertas activas de SLOs industriales (Fase 20, ADR-0018)
     try:

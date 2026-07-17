@@ -279,21 +279,19 @@ if __name__ == "__main__":
         # y la autenticación de usuarios en el propio frontend React.
         configurar_logging()
 
-        # ── Kill Switch: verificar ANTES de arrancar uvicorn ──────────────────
-        # Se consulta el Gist de GitHub de forma síncrona en este punto,
-        # garantizando que el sistema no acepta conexiones si está bloqueado.
-        # Si KILL_SWITCH_GIST_URL no está configurada, es_activo = True (pass).
+        # ── Kill Switch: licencia RSA local ANTES de arrancar uvicorn ─────────
+        # ADR-0022: cero red — license.key se valida con criptografia local
+        # (firma RSA + machine_id). Sin licencia = modo desktop libre (pass);
+        # licencia presente pero invalida = instalacion manipulada → no
+        # arrancar (misma politica Zero-Default que el diagnostico de abajo).
         from core import kill_switch as _ks
-        _estado_ks = asyncio.run(_ks.verificar_gist())
-        if _estado_ks is False:
-            # La respuesta del Gist fue explícitamente {"active": false}
+        if not _ks.validar_ahora():
             print(
-                "[KILL SWITCH] Sistema bloqueado por control remoto "
-                f"({_ks.KILL_SWITCH_GIST_URL}). Abortando.",
+                "[KILL SWITCH] Licencia local invalida "
+                f"(motivo: {_ks.estado_dict()['motivo']}). Abortando.",
                 file=sys.stderr,
             )
             sys.exit(78)   # EX_CONFIG — desactivado por configuración
-        # _estado_ks is None → Gist inalcanzable → fail-open (arrancar igual)
 
         # ── Chequeo de salud inicial (Fail-Hard, ADR-0008/ADR-0016) ───────────
         # Secreto JWT débil/por defecto, o AGENTDESK_DB_URL con credenciales

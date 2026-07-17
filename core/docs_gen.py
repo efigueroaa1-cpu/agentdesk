@@ -383,28 +383,27 @@ def generar_manual(empresa: str = "Su Empresa") -> bytes:
 
     _body(pdf,
           "El Kill Switch permite bloquear de forma inmediata la ejecución de todos los "
-          "agentes del sistema, tanto localmente desde el SecurityPanel como de forma remota "
-          "a través de un Gist de GitHub accesible públicamente.")
+          "agentes del sistema, localmente desde el SecurityPanel o mediante la licencia "
+          "RSA local (license.key) vinculada al hardware de la máquina.")
 
     _heading2(pdf, "Funcionamiento")
     _bullet(pdf, "Estado ACTIVO (verde): los agentes pueden ejecutarse normalmente.")
     _bullet(pdf, "Estado BLOQUEADO (rojo): ningún agente puede ejecutarse. Los en curso terminan su filtro actual y se detienen.")
-    _bullet(pdf, "El monitor verifica el Gist cada 5 minutos.")
-    _bullet(pdf, "Si la red falla, el último estado verificado se conserva (fail-safe).")
+    _bullet(pdf, "Sin license.key el sistema opera en modo desktop libre (siempre activo).")
+    _bullet(pdf, "Con licencia válida (firma RSA + ID de máquina + vigencia) el sistema opera con la edición licenciada.")
+    _bullet(pdf, "Una licencia presente pero inválida (firma rota, otra máquina o expirada) bloquea los agentes.")
+    _bullet(pdf, "El monitor re-valida license.key cada 5 minutos — instalar o corregir una licencia no requiere reiniciar.")
 
-    _heading2(pdf, "Configurar control remoto vía Gist")
-    _body(pdf, "Para habilitar el control remoto:")
-    _bullet(pdf, "Crea un Gist público en github.com/gist con el contenido: { \"active\": true }")
-    _bullet(pdf, "Copia la URL raw del Gist (formato: https://gist.githubusercontent.com/...)")
-    _bullet(pdf, "En el SecurityPanel, sección Kill Switch, pega la URL en el campo \"URL Gist\" y guarda.")
-    _bullet(pdf, "Para bloquear remotamente: edita el Gist y cambia active a false.")
-    _bullet(pdf, "El sistema detectará el cambio en la siguiente verificación (máx. 5 min).")
+    _heading2(pdf, "Instalar una licencia")
+    _bullet(pdf, "En el SecurityPanel, sección Kill Switch, pulsa \"Instalar licencia\" y pega el contenido de tu license.key.")
+    _bullet(pdf, "El ID de esta máquina se muestra en esa misma sección — envíalo al emisor para que genere tu licencia.")
+    _bullet(pdf, "La validación es 100% local (criptografía RSA): no requiere conexión a internet.")
     _bullet(pdf, "Para bloqueo inmediato: usa el botón \"Bloquear sistema\" en el panel.")
 
     _info_box(pdf,
-              "ⓘ  Configuración alternativa: agrega KILL_SWITCH_GIST_URL=<url_raw> al archivo .env "
-              "antes del primer arranque. Esta URL puede sobreescribirse en tiempo de ejecución "
-              "desde el SecurityPanel sin reiniciar el servidor.")
+              "ⓘ  Instalación manual alternativa: copia license.key a la carpeta de datos "
+              "(%APPDATA%\\AgentDesk\\license.key). El monitor la detecta en la siguiente "
+              "verificación (máx. 5 min) sin reiniciar el servidor.")
 
     _heading2(pdf, "Variables de entorno requeridas (.env)")
     anchos5 = [60.0, 122.0]
@@ -412,7 +411,8 @@ def generar_manual(empresa: str = "Su Empresa") -> bytes:
     env_vars = [
         ("MASTER_PASSWORD_HASH", "Hash bcrypt del primer administrador. Obligatorio para el primer arranque."),
         ("GEMINI_API_KEY",       "Clave de la API de Google Gemini. Requerida para ejecutar agentes IA."),
-        ("KILL_SWITCH_GIST_URL", "URL raw del Gist de control remoto. Opcional; sin él el switch es solo local."),
+        ("AGENTDESK_LICENSE_FILE", "Ruta alternativa al archivo license.key. Opcional; por defecto "
+                                   "%APPDATA%\\AgentDesk\\license.key."),
         ("AGENTDESK_JWT_SECRET", "Clave JWT personalizada (min. 32 caracteres). Opcional; tiene prioridad "
                                   "absoluta sobre jwt_secret.key. Sin ella, el sistema genera y persiste un "
                                   "secreto aleatorio en jwt_secret.key la primera vez."),
@@ -425,7 +425,7 @@ def generar_manual(empresa: str = "Su Empresa") -> bytes:
     _info_box(pdf,
               "curl http://127.0.0.1:8000/kill-switch\n\n"
               "Respuesta:\n"
-              "{ \"active\": true, \"fuente\": \"gist\", \"gist_configurado\": true, ... }")
+              "{ \"active\": true, \"fuente\": \"licencia\", \"licencia_valida\": true, ... }")
 
     # ── Pie de página en todas las páginas ────────────────────────────────────────
     class _PDF(type(pdf)):
