@@ -29,23 +29,30 @@ logger = logging.getLogger(__name__)
 # ── Catálogo de sensores (simulados o mapeados a topics MQTT) ──────────────────
 
 SENSORES: list[dict] = [
+    # min_fisico/max_fisico (ADR-0021, [INDUSTRIAL-INTEGRITY]): rango de
+    # validez FISICA de la magnitud, no de alarma de proceso — una lectura
+    # fuera de este rango es imposible (sensor roto, payload malicioso) y
+    # se descarta del Gemelo Digital en vez de tratarse como "muy critica".
     {
         "id": "temp_horno_1", "nombre": "Temperatura Horno 1",
         "topic": "planta/horno1/temperatura", "unidad": "°C",
         "base": 210.0, "amplitud": 40.0,
         "umbral_warn": 235.0, "umbral_critico": 245.0,
+        "min_fisico": 0.0, "max_fisico": 400.0,
     },
     {
         "id": "presion_linea_a", "nombre": "Presión Línea A",
         "topic": "planta/lineaA/presion", "unidad": "bar",
         "base": 6.5, "amplitud": 1.8,
         "umbral_warn": 7.5, "umbral_critico": 8.0,
+        "min_fisico": 0.0, "max_fisico": 20.0,
     },
     {
         "id": "vibracion_motor_3", "nombre": "Vibración Motor 3",
         "topic": "planta/motor3/vibracion", "unidad": "mm/s",
         "base": 2.8, "amplitud": 2.4,
         "umbral_warn": 4.3, "umbral_critico": 4.9,
+        "min_fisico": 0.0, "max_fisico": 50.0,
     },
 ]
 

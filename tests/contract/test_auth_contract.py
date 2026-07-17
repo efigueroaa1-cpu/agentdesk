@@ -63,6 +63,9 @@ RUTAS_PUBLICAS_AUTORIZADAS: frozenset[tuple[str, str]] = frozenset({
     # Map-Reduce (Fase 21, ADR-0019): RBAC supervisor+ dentro del handler
     # (dispara N llamadas reales a LLM, mismo criterio que /auditoria/*)
     ("POST", "/orquestador/mapreduce"),
+    # Analista de Riesgos OT (Fase 23, ADR-0021): RBAC supervisor+ dentro
+    # del handler (puede disparar N llamadas LLM via Map-Reduce)
+    ("POST", "/analytics/riesgo-ot/{proyecto_id}"),
     # Webhook externo: autenticación propia por bcrypt en el handler
     ("POST", "/webhook/whatsapp"),
 })
