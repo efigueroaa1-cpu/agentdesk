@@ -1,0 +1,217 @@
+{
+  "__comment": "AgentDesk - Dashboard de Operacion del Piloto Industrial (Fase 22, ADR-0020). Importar en Grafana >= 10 (Dashboards > Import). Datasource: Prometheus scrapeando GET /metrics de AgentDesk. NOTA HONESTA: los 3 paneles de la fila 'Workers Celery' consumen metricas del celery-exporter estandar (github.com/danihodovic/celery-exporter), que debe desplegarse junto al broker en staging - AgentDesk no re-exporta metricas internas de Celery. Todos los demas paneles usan metricas agentdesk_* nativas ya existentes en el endpoint /metrics.",
+  "annotations": { "list": [] },
+  "editable": true,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "schemaVersion": 39,
+  "tags": ["agentdesk", "piloto-industrial", "adr-0020"],
+  "templating": {
+    "list": [
+      {
+        "name": "DS_PROMETHEUS",
+        "type": "datasource",
+        "query": "prometheus",
+        "label": "Prometheus",
+        "current": {}
+      }
+    ]
+  },
+  "time": { "from": "now-6h", "to": "now" },
+  "timezone": "browser",
+  "title": "AgentDesk - Piloto Industrial (Staging)",
+  "uid": "agentdesk-piloto",
+  "panels": [
+    {
+      "type": "row", "title": "Resource Guard - Circuit Breaker de Concurrencia (ADR-0019)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }, "collapsed": false, "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Carga del host vista por resource_guard (CPU / RAM %)",
+      "description": "agentdesk_carga_host_pct - la lectura EXACTA con la que puede_admitir_tarea() decide admitir o rechazar tareas pesadas. Umbral critico por defecto: 90% (AGENTDESK_CPU_MAX_PCT / AGENTDESK_MEM_MAX_PCT).",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 1 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent", "min": 0, "max": 100,
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "yellow", "value": 75 },
+            { "color": "red", "value": 90 }
+          ] },
+          "custom": { "drawStyle": "line", "fillOpacity": 12, "thresholdsStyle": { "mode": "line" } }
+        },
+        "overrides": []
+      },
+      "targets": [
+        { "expr": "agentdesk_carga_host_pct", "legendFormat": "{{recurso}}", "refId": "A" }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Rechazos por sobrecarga (ultima hora)",
+      "description": "increase(agentdesk_circuito_concurrencia_abierto_total[1h]) - cada unidad es una tarea pesada rechazada para proteger la estabilidad del host. Sostenido > 0 = el host del piloto esta subdimensionado (ver requisitos de hardware, ADR-0020).",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 1 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "yellow", "value": 1 },
+            { "color": "red", "value": 10 }
+          ] }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        { "expr": "increase(agentdesk_circuito_concurrencia_abierto_total[1h])", "legendFormat": "rechazos/1h", "refId": "A" }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Circuitos LLM activos",
+      "description": "agentdesk_circuito_llm_activo - 1 = proveedor disponible (CLOSED), 0 = circuito abierto (OPEN). Complementa GET /diagnostico/llm.",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 1 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short", "min": 0, "max": 1,
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "OPEN", "color": "red" }, "1": { "text": "CLOSED", "color": "green" } } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        { "expr": "agentdesk_circuito_llm_activo", "legendFormat": "{{proveedor}}", "refId": "A" }
+      ]
+    },
+    {
+      "type": "row", "title": "Orquestacion Paralela Map-Reduce (ADR-0019/0020)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 }, "collapsed": false, "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Latencia Map-Reduce p95 por fase",
+      "description": "histogram_quantile sobre agentdesk_mapreduce_duracion_segundos - fase 'map' = N workers LLM en hilos aislados corriendo en paralelo; fase 'reduce' = consolidacion. Un p95 de map creciendo con workers constantes = proveedor LLM degradado o host saturado.",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 10 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "drawStyle": "line", "fillOpacity": 12 }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(agentdesk_mapreduce_duracion_segundos_bucket[10m])) by (le, fase))",
+          "legendFormat": "p95 {{fase}}", "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(agentdesk_mapreduce_duracion_segundos_bucket[10m])) by (le, fase))",
+          "legendFormat": "p50 {{fase}}", "refId": "B"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Workers Map-Reduce despachados (exitosos vs fallidos)",
+      "description": "rate(agentdesk_mapreduce_workers_total[10m]) por resultado. Fallidos sostenidos > 0 con exitosos estables = un agente/proveedor especifico degradado (cruzar con la traza tipo=map_reduce en /auditoria/interacciones).",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 10 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "wps",
+          "custom": { "drawStyle": "bars", "fillOpacity": 60 }
+        },
+        "overrides": [
+          { "matcher": { "id": "byRegexp", "options": ".*fallido.*" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } } ] },
+          { "matcher": { "id": "byRegexp", "options": ".*exitoso.*" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } } ] }
+        ]
+      },
+      "targets": [
+        { "expr": "sum(rate(agentdesk_mapreduce_workers_total[10m])) by (resultado)", "legendFormat": "{{resultado}}", "refId": "A" }
+      ]
+    },
+    {
+      "type": "row", "title": "Workers Celery - Queue Mode distribuido (requiere celery-exporter en staging)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 18 }, "collapsed": false, "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "Workers Celery vivos",
+      "description": "celery_worker_up del celery-exporter (NO es una metrica agentdesk_* nativa - desplegar github.com/danihodovic/celery-exporter apuntando al mismo broker Redis de AGENTDESK_QUEUE_URL). Sin exporter este panel queda en 'No data', lo cual es en si mismo una senal de despliegue incompleto.",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 6, "x": 0, "y": 19 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] },
+          "noValue": "SIN EXPORTER"
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        { "expr": "sum(celery_worker_up)", "legendFormat": "workers", "refId": "A" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Tareas Celery por estado",
+      "description": "celery-exporter: succeeded/failed/retried por unidad de tiempo. Complementa el estado por job de la API (encolar/estado).",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 9, "x": 6, "y": 19 },
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "drawStyle": "line", "fillOpacity": 12 } }, "overrides": [] },
+      "targets": [
+        { "expr": "sum(rate(celery_task_succeeded_total[10m]))", "legendFormat": "exitosas", "refId": "A" },
+        { "expr": "sum(rate(celery_task_failed_total[10m]))", "legendFormat": "fallidas", "refId": "B" },
+        { "expr": "sum(rate(celery_task_retried_total[10m]))", "legendFormat": "reintentadas", "refId": "C" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Runtime p95 de tareas Celery",
+      "description": "histogram_quantile sobre celery_task_runtime_bucket (celery-exporter).",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 9, "x": 15, "y": 19 },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 12 } }, "overrides": [] },
+      "targets": [
+        { "expr": "histogram_quantile(0.95, sum(rate(celery_task_runtime_bucket[10m])) by (le))", "legendFormat": "p95 runtime", "refId": "A" }
+      ]
+    },
+    {
+      "type": "row", "title": "FinOps IA y Auditoria (ADR-0017/0018)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 27 }, "collapsed": false, "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Tokens por proveedor (exactos vs estimados)",
+      "description": "rate(agentdesk_tokens_total[30m]) - la etiqueta 'exacto' distingue conteo real del proveedor de la estimacion chars/4 (ADR-0017).",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 28 },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 12 } }, "overrides": [] },
+      "targets": [
+        { "expr": "sum(rate(agentdesk_tokens_total[30m])) by (proveedor, exacto)", "legendFormat": "{{proveedor}} exacto={{exacto}}", "refId": "A" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Costo USD estimado por proveedor",
+      "description": "increase(agentdesk_costo_usd_total[1h]) - estimacion de tablero (ADR-0017), no factura real.",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 28 },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD", "custom": { "drawStyle": "line", "fillOpacity": 12 } }, "overrides": [] },
+      "targets": [
+        { "expr": "sum(increase(agentdesk_costo_usd_total[1h])) by (proveedor)", "legendFormat": "{{proveedor}} USD/1h", "refId": "A" }
+      ]
+    }
+  ]
+}

@@ -22,10 +22,18 @@ Usa una base SQLite temporal para la traza de auditoría — no toca la DB
 real del usuario.
 """
 import asyncio
+import os
 import tempfile
 import time
 import unittest
 from pathlib import Path
+
+# Estos tests prueban Map-Reduce, no el Circuit Breaker de Concurrencia (que
+# tiene su propia suite en test_resource_guard.py). Umbrales al 100% para que
+# una maquina de CI/dev genuinamente cargada (RAM >90% real) no los vuelva
+# flaky -- el codigo del breaker sigue ejecutandose, solo que nunca rechaza.
+os.environ["AGENTDESK_CPU_MAX_PCT"] = "100"
+os.environ["AGENTDESK_MEM_MAX_PCT"] = "100"
 
 import core.database as db
 from core.services import audit_service

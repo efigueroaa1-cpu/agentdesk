@@ -67,6 +67,17 @@ if _DISPONIBLE:
         "por carga de host excesiva (Fase 21, ADR-0019)",
         registry=REGISTRO,
     )
+    MAPREDUCE_DURACION_S = Histogram(
+        "agentdesk_mapreduce_duracion_segundos",
+        "Duracion de cada fase de una orquestacion Map-Reduce (Fase 22, ADR-0020)",
+        ["fase"], registry=REGISTRO,
+        buckets=(0.5, 1, 2.5, 5, 10, 30, 60, 120),
+    )
+    MAPREDUCE_WORKERS_TOTAL = Counter(
+        "agentdesk_mapreduce_workers_total",
+        "Workers Map-Reduce despachados, por resultado (Fase 22, ADR-0020)",
+        ["resultado"], registry=REGISTRO,
+    )
 
 
 def registrar_interaccion(tipo: str, exitoso: bool, agente_id: str,
@@ -110,6 +121,22 @@ def actualizar_carga_host(cpu_pct: float, mem_pct: float) -> None:
         CARGA_HOST_PCT.labels(recurso="mem").set(mem_pct)
     except Exception as exc:
         logger.warning("metrics_prometheus: fallo al actualizar carga de host (%s)", exc)
+
+
+def registrar_mapreduce(duracion_map_s: float, duracion_reduce_s: float,
+                        exitosos: int, fallidos: int) -> None:
+    """Metricas de una orquestacion Map-Reduce completa (Fase 22, ADR-0020)."""
+    if not _DISPONIBLE:
+        return
+    try:
+        MAPREDUCE_DURACION_S.labels(fase="map").observe(duracion_map_s)
+        MAPREDUCE_DURACION_S.labels(fase="reduce").observe(duracion_reduce_s)
+        if exitosos:
+            MAPREDUCE_WORKERS_TOTAL.labels(resultado="exitoso").inc(exitosos)
+        if fallidos:
+            MAPREDUCE_WORKERS_TOTAL.labels(resultado="fallido").inc(fallidos)
+    except Exception as exc:
+        logger.warning("metrics_prometheus: fallo al registrar map-reduce (%s)", exc)
 
 
 def registrar_circuito_concurrencia_abierto() -> None:

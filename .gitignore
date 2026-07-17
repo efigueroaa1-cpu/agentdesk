@@ -4,6 +4,8 @@ node_modules/
 # Generados por build — NUNCA se versionan ni se editan a mano
 dist/
 build/
+dist_f22/
+build_f22/
 react_dist/
 agentdesk-dashboard/dist/
 agentdesk-dashboard/src-tauri/target/
