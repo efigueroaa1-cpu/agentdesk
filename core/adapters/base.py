@@ -161,18 +161,40 @@ class BaseTelemetryAdapter:
     # ── Normalización y difusión resiliente ───────────────────────────────
 
     def _evento_de(self, sensor: dict, valor: float) -> MetricEvent:
+        # Validacion de rango FISICO ([INDUSTRIAL-INTEGRITY], ADR-0021): una
+        # lectura fuera de min_fisico/max_fisico es imposible en la magnitud
+        # real (sensor roto o payload malicioso) — se marca envenenada, se
+        # audita, y telemetry_history la excluye del Gemelo Digital. El
+        # evento igual se difunde (el operador DEBE ver que algo anda mal),
+        # pero como dato sospechoso, nunca como lectura legitima "critica".
+        # Sensores sin rango declarado (dobles de prueba, adaptadores de
+        # terceros) no validan: el guardian ya exige el rango en los
+        # catalogos reales, y un KeyError aqui seria tratado por ciclo()
+        # como caida de red -> bucle de reconexion infinito.
+        min_fisico = sensor.get("min_fisico", float("-inf"))
+        max_fisico = sensor.get("max_fisico", float("inf"))
+        fuera_de_rango = not (min_fisico <= valor <= max_fisico)
+        if fuera_de_rango:
+            logger.warning(
+                "AUDITORIA_SEGURIDAD: lectura fisicamente imposible en '%s' — "
+                "valor=%s fuera de [%s, %s] %s (data poisoning o sensor roto); "
+                "excluida del Gemelo Digital",
+                sensor["id"], valor, min_fisico, max_fisico,
+                sensor["unidad"],
+            )
         return MetricEvent(
             fuente=sensor["id"],
             tipo="lectura_sensor",
             valor=valor,
             unidad=sensor["unidad"],
             ts=utcnow(),
-            nivel=_nivel_de(sensor, valor),
+            nivel="critico" if fuera_de_rango else _nivel_de(sensor, valor),
             metadata={
                 "nombre":         sensor["nombre"],
                 "protocolo":      self.protocolo(),
                 "umbral_warn":    sensor["umbral_warn"],
                 "umbral_critico": sensor["umbral_critico"],
+                **({"fuera_de_rango_fisico": True} if fuera_de_rango else {}),
                 **{k: sensor[k] for k in ("topic", "registro", "node_id") if k in sensor},
             },
         )
@@ -193,6 +215,14 @@ class BaseTelemetryAdapter:
     async def _difundir(self, evento: MetricEvent) -> None:
         self._estado[evento.fuente]["ultima_fetch"] = evento.ts.isoformat() if evento.ts else None
         self._estado[evento.fuente]["ultimo_valor"] = evento.valor
+
+        # Historial OT del Gemelo Digital (Fase 23, ADR-0021) — best-effort;
+        # descarta internamente los eventos marcados fuera de rango fisico.
+        try:
+            from core.telemetry_history import registrar_evento
+            registrar_evento(evento.to_dict())
+        except Exception:
+            pass
 
         for cb in list(self._callbacks):
             cola = self._pendientes.setdefault(id(cb), deque(maxlen=self._max_cola))

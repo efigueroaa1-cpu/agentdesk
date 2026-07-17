@@ -223,6 +223,107 @@ async def analytics_curva_s(proyecto_id: str, req: Request) -> dict:
     return resultado
 
 
+# ── Gemelo Digital Operativo (Fase 23, ADR-0021) ──────────────────────────────
+
+@router.get("/analytics/proyeccion-ot/{proyecto_id}")
+async def analytics_proyeccion_ot(proyecto_id: str, req: Request) -> dict:
+    """
+    Curva S ajustada por telemetría REAL de planta: nueva fecha fin
+    proyectada, impacto en cronograma y riesgo de presupuesto. Emite la
+    alerta al dashboard (WS, supervisor+) si hay riesgo financiero.
+    """
+    from core.auth import tiene_permiso
+    if not tiene_permiso(getattr(req.state, "rol", "viewer"), "supervisor"):
+        raise HTTPException(403, detail="Se requiere rol supervisor o admin.")
+
+    from core.analytics import motor_correlacion
+    resultado = await asyncio.get_running_loop().run_in_executor(
+        None, lambda: motor_correlacion.proyeccion_ajustada(proyecto_id))
+
+    if resultado.get("riesgo_presupuesto") or resultado.get("impacto_cronograma"):
+        await _state.manager.broadcast(
+            {
+                "tipo":        "riesgo_ot_alerta",
+                "proyecto_id": proyecto_id,
+                "titulo":      f"Riesgo industrial-financiero en {proyecto_id}",
+                "cuerpo": (
+                    f"Factor de produccion={resultado['produccion']['factor']:.2f} · "
+                    f"atraso proyectado={resultado['dias_atraso_proyectados']} dias · "
+                    f"EAC ajustado={resultado['eac_ajustado']:.0f}"
+                ),
+                "riesgo_presupuesto": resultado.get("riesgo_presupuesto", False),
+            },
+            rol_minimo="supervisor",
+        )
+    return resultado
+
+
+@router.get("/analytics/roi")
+async def analytics_roi(req: Request, proyecto_id: str = "", dias: int = 30) -> dict:
+    """
+    Dashboard Ejecutivo "Real-Time ROI" (ADR-0021): costo de ejecución
+    acumulado (tokens/USD de IA + carga de recursos del host) vs. el valor
+    del avance físico reportado por los sensores (EV de la Curva S escalado
+    por el factor de producción real).
+    """
+    from core.auth import tiene_permiso
+    if not tiene_permiso(getattr(req.state, "rol", "viewer"), "supervisor"):
+        raise HTTPException(403, detail="Se requiere rol supervisor o admin.")
+
+    from core.services import audit_service
+    from core.services.resource_guard import carga_actual
+
+    costos = await asyncio.get_running_loop().run_in_executor(
+        None, lambda: audit_service.resumen_costos(limit_dias=dias))
+
+    valor_fisico = None
+    if proyecto_id:
+        from core.analytics import motor_correlacion
+        p       = await asyncio.get_running_loop().run_in_executor(
+            None, lambda: motor_correlacion.proyeccion_ajustada(proyecto_id))
+        kpis    = p.get("curva_s", {}).get("kpis", {})
+        factor  = p.get("produccion", {}).get("factor", 1.0)
+        ev      = kpis.get("ev", 0) or 0
+        valor_fisico = {
+            "proyecto_id":        proyecto_id,
+            "ev_reportado_usd":   ev,
+            "factor_produccion":  factor,
+            "ev_fisico_usd":      round(ev * factor, 2),
+            "riesgo_presupuesto": p.get("riesgo_presupuesto", False),
+            "dias_atraso_proyectados": p.get("dias_atraso_proyectados", 0),
+        }
+
+    costo_ia = costos.get("costo_usd_total", 0.0)
+    tokens   = sum(d.get("tokens", 0) for d in costos.get("por_agente", {}).values())
+    roi = None
+    if valor_fisico and costo_ia > 0:
+        roi = round(valor_fisico["ev_fisico_usd"] / costo_ia, 2)
+
+    return {
+        "ventana_dias":    dias,
+        "costo_ejecucion": {"costo_ia_usd": costo_ia, "tokens": tokens,
+                            "recursos_host": carga_actual()},
+        "valor_fisico":    valor_fisico,
+        "roi":             roi,
+    }
+
+
+@router.post("/analytics/riesgo-ot/{proyecto_id}")
+async def analytics_riesgo_ot(proyecto_id: str, req: Request,
+                              analista_id: str = "") -> dict:
+    """
+    Analista de Riesgos (ADR-0021): screening determinista de las últimas
+    1000 métricas industriales + evaluación paralela Map-Reduce si se
+    indica un agente analista. Supervisor+ (puede disparar N llamadas LLM).
+    """
+    from core.auth import tiene_permiso
+    if not tiene_permiso(getattr(req.state, "rol", "viewer"), "supervisor"):
+        raise HTTPException(403, detail="Se requiere rol supervisor o admin.")
+    user_id = getattr(req.state, "user_id", "anonimo")
+    return await _state._risk_service.analizar(
+        proyecto_id, analista_id=analista_id or None, user_id=user_id)
+
+
 @router.get("/alertas/config")
 async def get_alertas_config() -> dict:
     """Lee la configuración de umbrales para alertas económicas."""

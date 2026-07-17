@@ -104,7 +104,15 @@ class MapReduceService:
         self._queue = queue_service
 
     async def ejecutar(self, lider_id: str, trabajadores_ids: list[str], prompt: str,
-                        user_id: str = "anonimo") -> dict:
+                        user_id: str = "anonimo",
+                        prompts: list[str] | None = None) -> dict:
+        """
+        `prompts` (Fase 23, ADR-0021): opcional, uno POR trabajador (mismo
+        largo que `trabajadores_ids`) — habilita el patron Map-Reduce
+        clasico de particionar un dataset en chunks (ej. el Analista de
+        Riesgos repartiendo 1000 metricas industriales). Sin `prompts`,
+        todos reciben el mismo `prompt` (comportamiento Fase 21 intacto).
+        """
         orq = self._get_orquestador()
         if orq is None or not hasattr(orq, "agentes"):
             raise RuntimeError("Orquestador no disponible para Map-Reduce.")
@@ -112,6 +120,8 @@ class MapReduceService:
             raise RuntimeError(f"Agente Lider '{lider_id}' no existe.")
         if not trabajadores_ids:
             raise ValueError("Map-Reduce requiere al menos un agente trabajador.")
+        if prompts is not None and len(prompts) != len(trabajadores_ids):
+            raise ValueError("prompts debe tener el mismo largo que trabajadores_ids.")
 
         trabajadores = []
         for tid in trabajadores_ids:
@@ -128,8 +138,10 @@ class MapReduceService:
         t0 = _time.monotonic()
         with medir_paso("mapreduce.map", lider=lider_id, workers=len(trabajadores)):
             tareas = [
-                self._queue.ejecutar_pesado(_ejecutar_subtarea_en_hilo, agente, tid, prompt, user_id)
-                for tid, agente in trabajadores
+                self._queue.ejecutar_pesado(
+                    _ejecutar_subtarea_en_hilo, agente, tid,
+                    prompts[i] if prompts is not None else prompt, user_id)
+                for i, (tid, agente) in enumerate(trabajadores)
             ]
             resultados: list[ResultadoWorker] = list(await asyncio.gather(*tareas))
         t_map = _time.monotonic() - t0
