@@ -40,10 +40,15 @@ prometheus-client>=0.25
 # ── Calidad y gate (desarrollo) ───────────────────────────────────────────
 bandit>=1.9.4
 
-# ── Opcionales de planta (ADR-0004/0005) — descomenta según despliegue ────
-# psycopg2-binary>=2.9     # PostgreSQL (AGENTDESK_DB_URL) — engine ORM sincrono
-# asyncpg>=0.31            # PostgreSQL — solo el chequeo async de arranque (ADR-0013)
-# paho-mqtt>=2.0           # broker MQTT real (AGENTDESK_MQTT_BROKER)
+# ── Piloto industrial (ADR-0020) — requeridas en el equipo de BUILD para
+# que el instalador las empaquete (hiddenimports en agentdesk.spec) ────────
+psycopg2-binary>=2.9       # PostgreSQL (AGENTDESK_DB_URL) — engine ORM sincrono
+asyncpg>=0.31              # PostgreSQL — chequeo async de arranque (ADR-0013)
+celery>=5.6                # Queue Mode distribuido (AGENTDESK_QUEUE_URL, ADR-0019)
+redis>=8.0                 # cliente Redis: ping de deteccion de broker + backend Celery
+paho-mqtt>=2.0             # broker MQTT real (AGENTDESK_MQTT_BROKER)
+psutil>=5.9                # Circuit Breaker de Concurrencia (ADR-0019) + sandbox
+
+# ── Opcionales de planta (ADR-0004) — descomenta según despliegue ─────────
 # pymodbus>=3.6            # PLC Modbus TCP (AGENTDESK_MODBUS_HOST)
 # asyncua>=1.1             # servidor OPC-UA (AGENTDESK_OPCUA_ENDPOINT)
-# psutil>=5.9              # limite de memoria del sandbox (recomendado)

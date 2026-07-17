@@ -23,6 +23,13 @@ a = Analysis(
         (str(ROOT / "core"),                             "core"),
         (str(ROOT / "ui"),                               "ui"),
         (str(ROOT / "data"),                             "data"),
+        # Migraciones Alembic (ADR-0013/0020): _aplicar_migraciones() busca
+        # alembic.ini y migrations/ en la raiz del bundle. Sin estas dos
+        # entradas, TODO instalador degradaba en silencio a create_all()
+        # (best-effort) — el esquema inicial funcionaba, pero las migraciones
+        # incrementales del piloto PostgreSQL quedaban inertes en el cliente.
+        (str(ROOT / "alembic.ini"),                      "."),
+        (str(ROOT / "migrations"),                       "migrations"),
     ],
     hiddenimports=[
         # Logging
@@ -81,6 +88,40 @@ a = Analysis(
         # invisible al analisis estatico de PyInstaller — hiddenimport obligatorio.
         "sqlalchemy.dialects.postgresql",
         "psycopg2",
+        "asyncpg",   # chequeo async de conectividad PG en el arranque (ADR-0013)
+        # Migraciones Alembic (ADR-0013/0020): alembic carga env.py y las
+        # revisiones por RUTA en runtime (script_location), no por import —
+        # el paquete alembic mismo debe ir completo como hiddenimport.
+        "alembic",
+        "alembic.command",
+        "alembic.config",
+        "alembic.runtime.migration",
+        "alembic.script",
+        # Queue Mode distribuido (ADR-0006/0019): Celery carga backends y
+        # transportes por NOMBRE en runtime ("redis://" -> kombu.transport.redis,
+        # backend -> celery.backends.redis) — invisible al analisis estatico,
+        # exactamente el mismo patron que el dialecto de SQLAlchemy.
+        "celery",
+        "celery.app",
+        "celery.backends",
+        "celery.backends.redis",
+        "celery.loaders.app",
+        "celery.worker.strategy",
+        "kombu",
+        "kombu.transport.redis",
+        "billiard",
+        "vine",
+        "redis",
+        # Circuit Breaker de Concurrencia + metricas (ADR-0014/0019)
+        "psutil",
+        "prometheus_client",
+        # Broker MQTT de planta (ADR-0004, opcional): paho se importa dentro
+        # de una funcion con fallback a simulador — si no viaja en el bundle,
+        # el modo AGENTDESK_MQTT_BROKER degradaria a simulador EN EL CLIENTE
+        # sin error visible, el peor modo de fallo para un piloto.
+        "paho",
+        "paho.mqtt",
+        "paho.mqtt.client",
         "beautifulsoup4",
         "bs4",
         # PDF (fpdf2 - no PIL dependency)

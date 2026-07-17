@@ -50,6 +50,24 @@ class TestCargaActual(unittest.TestCase):
 
 class TestPuedeAdmitirTarea(unittest.TestCase):
 
+    def setUp(self):
+        # Aislamiento de entorno: otros modulos de test (test_map_reduce.py)
+        # fijan estos umbrales al 100% a nivel modulo para no ser flaky en
+        # maquinas cargadas — bajo `unittest discover` esa env var persiste
+        # entre archivos y rompia test_02 (99% < 100 => admitia). Esta suite
+        # SIEMPRE parte de los defaults (90/90) y restaura al salir.
+        self._env_previo = {
+            k: os.environ.pop(k, None)
+            for k in ("AGENTDESK_CPU_MAX_PCT", "AGENTDESK_MEM_MAX_PCT")
+        }
+
+    def tearDown(self):
+        for k, v in self._env_previo.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
     def test_01_carga_baja_admite(self):
         with patch.object(resource_guard, "carga_actual",
                           return_value={"cpu_pct": 10.0, "mem_pct": 10.0, "psutil_disponible": True}):

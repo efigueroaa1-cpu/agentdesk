@@ -120,20 +120,34 @@ class MapReduceService:
                 raise RuntimeError(f"Agente trabajador '{tid}' no existe.")
             trabajadores.append((tid, agente))
 
+        import time as _time
         from core.telemetry_otel import medir_paso
 
         # MAP: cada trabajador se despacha a su propio hilo aislado, EN
         # PARALELO, sin bloquear el event loop -- ver docstring del modulo.
+        t0 = _time.monotonic()
         with medir_paso("mapreduce.map", lider=lider_id, workers=len(trabajadores)):
             tareas = [
                 self._queue.ejecutar_pesado(_ejecutar_subtarea_en_hilo, agente, tid, prompt, user_id)
                 for tid, agente in trabajadores
             ]
             resultados: list[ResultadoWorker] = list(await asyncio.gather(*tareas))
+        t_map = _time.monotonic() - t0
 
         # REDUCE
+        t0 = _time.monotonic()
         with medir_paso("mapreduce.reduce", lider=lider_id, workers=len(trabajadores)):
             consolidado = _reducir_resultados(resultados)
+        t_reduce = _time.monotonic() - t0
+
+        # Prometheus (Fase 22, ADR-0020): latencia por fase + workers por
+        # resultado, best-effort — la base de los dashboards de Grafana.
+        try:
+            from core.metrics_prometheus import registrar_mapreduce
+            registrar_mapreduce(t_map, t_reduce,
+                                consolidado["exitosos"], consolidado["fallidos"])
+        except Exception as exc:
+            logger.warning("MAP_REDUCE: metricas Prometheus no actualizadas (%s)", exc)
 
         self._auditar(lider_id, trabajadores_ids, prompt, consolidado, user_id)
         return consolidado
