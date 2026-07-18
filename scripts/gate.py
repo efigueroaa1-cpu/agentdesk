@@ -111,7 +111,9 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # user_id+proyecto_id en llamadas Hermes por AST de parentesis) + suite memory
     # subio 1045->1110 (2026-07-17, ADR-0024): regla [INDUSTRIAL-ACTION]
     # (limites fisicos de escritura + filtro determinista + RBAC en /ot/)
-    "scripts/gate.py":                                                  1110,
+    # subio 1110->1154 (2026-07-17, ADR-0025): regla [INTENT-SAFETY]
+    # (el Copiloto propone, jamas ejecuta; filtro obligatorio + suite intent)
+    "scripts/gate.py":                                                  1154,
     "dashboard.py":                                                     1257,
     "ui/dashboard.py":                                                  1257,
     # providers.py subio de <500 a 528 (2026-07-16, ADR-0017): generate_con_uso()
@@ -950,6 +952,47 @@ def check_semantic_privacy(archivos: list[str]) -> list[str]:
     return errores
 
 
+# Seguridad de intencion (Fase 27, ADR-0025): el Copiloto traduce lenguaje
+# natural en planes — un plan que ofrezca al usuario una accion OT sin
+# filtrar seria un LLM decidiendo sobre fierros. Estructuralmente prohibido.
+def check_intent_safety(archivos: list[str]) -> list[str]:
+    """
+    ADR-0025 [INTENT-SAFETY]:
+      1. core/services/intent_service.py NO puede invocar escribir_tag ni
+         aprobar() — el Copiloto propone, jamas ejecuta.
+      2. Toda accion OT del plan debe salir de _filtrar_acciones_ot()
+         (que usa ot_service.validar, el filtro determinista de ADR-0024)
+         y planificar() debe invocarlo.
+      3. La suite tests/intent corre en cada gate.
+    """
+    errores = []
+    texto = "\n".join(leer("core/services/intent_service.py"))
+    if not texto:
+        return ["  [INTENT-SAFETY] core/services/intent_service.py ausente"]
+    for prohibido in ("escribir_tag", ".aprobar("):
+        if prohibido in texto:
+            errores.append(
+                f"  [INTENT-SAFETY] intent_service.py contiene '{prohibido}' "
+                f"— el Copiloto propone, jamas ejecuta (ADR-0025)"
+            )
+    if "ot_service.validar(" not in texto:
+        errores.append("  [INTENT-SAFETY] intent_service.py no usa "
+                       "ot_service.validar() — filtro de limites ausente")
+    if "_filtrar_acciones_ot(" not in texto.split("async def planificar")[-1]:
+        errores.append("  [INTENT-SAFETY] planificar() no pasa las acciones "
+                       "por _filtrar_acciones_ot()")
+    proc = subprocess.run(
+        [sys.executable, "-m", "unittest", "discover", "-s", "tests/intent",
+         "-t", ".", "-p", "test_*.py"],
+        cwd=RAIZ, capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        detalle = (proc.stderr or proc.stdout or "").strip().splitlines()[-25:]
+        errores += ["  [INTENT-SAFETY] tests/intent FALLO:"] + \
+                   [f"    {linea}" for linea in detalle]
+    return errores
+
+
 # Actuacion industrial (Fase 26, ADR-0024): escribir hacia la planta puede
 # mover fierros — cada tag escribible exige limite fisico de seguridad, y
 # ningun endpoint de aprobacion puede quedar sin RBAC supervisor+.
@@ -1091,6 +1134,7 @@ def main() -> int:
     errores += check_semantic_privacy(archivos)
     errores += check_memoria_hermes()
     errores += check_industrial_action(archivos)
+    errores += check_intent_safety(archivos)
 
     if errores:
         print(f"\nVIOLACIONES ({len(errores)}):")

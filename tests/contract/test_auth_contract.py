@@ -68,6 +68,10 @@ RUTAS_PUBLICAS_AUTORIZADAS: frozenset[tuple[str, str]] = frozenset({
     # del handler (el guardian [INDUSTRIAL-ACTION] verifica que siga ahi).
     ("POST", "/ot/acciones/{propuesta_id}/aprobar"),
     ("POST", "/ot/acciones/{propuesta_id}/rechazar"),
+    # Fase 27 (ADR-0025): Copiloto de Intencion — RBAC supervisor+ dentro
+    # del handler; las acciones OT del plan pasan [INTENT-SAFETY].
+    ("POST", "/copiloto/planificar"),
+    ("POST", "/copiloto/aplicar"),
     ("PUT",  "/update/url"),
     # Map-Reduce (Fase 21, ADR-0019): RBAC supervisor+ dentro del handler
     # (dispara N llamadas reales a LLM, mismo criterio que /auditoria/*)
