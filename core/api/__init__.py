@@ -149,6 +149,23 @@ async def startup() -> None:
     # Verificación inmediata (no espera el primer intervalo de 5 min)
     await kill_switch.verificar_licencia()
 
+    # Canales de notificacion proactiva (Fase 29, ADR-0027): composicion en
+    # el borde — los adaptadores solo se tocan aqui, jamas en services/.
+    try:
+        from core.adapters.notification_adapter import (
+            SlackWebhookAdapter, WhatsAppCloudAdapter,
+        )
+        from core.services.notification_service import notification_service
+        for canal in (SlackWebhookAdapter(), WhatsAppCloudAdapter()):
+            if canal.configurado:
+                notification_service.registrar_canal(canal)
+        logger.info(
+            "Notificaciones proactivas: canales=%s",
+            notification_service.canales() or "ninguno (solo log critico)",
+        )
+    except Exception as exc:
+        logger.error("Notification init error: %s", exc)
+
     # Alertas activas de SLOs industriales (Fase 20, ADR-0018)
     try:
         from core.services.alert_service import iniciar_monitor as _iniciar_monitor_alertas

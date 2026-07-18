@@ -115,7 +115,10 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # (el Copiloto propone, jamas ejecuta; filtro obligatorio + suite intent)
     # subio 1154->1171 (2026-07-17, ADR-0026): check_integracion (blitz de
     # integracion cruzada en cada gate, espejo del CI remoto)
-    "scripts/gate.py":                                                  1171,
+    # subio 1171->1220 (2026-07-18, ADR-0027): regla [ALERT-DISPATCH]
+    # (despacho proactivo de alertas: puerto+despachador existen, sin
+    # transporte HTTP en servicios nuevos, suite de notificaciones)
+    "scripts/gate.py":                                                  1220,
     "dashboard.py":                                                     1257,
     "ui/dashboard.py":                                                  1257,
     # providers.py subio de <500 a 528 (2026-07-16, ADR-0017): generate_con_uso()
@@ -1109,6 +1112,51 @@ def _correr_suite(modulo: str, etiqueta: str) -> list[str]:
            [f"    {linea}" for linea in detalle]
 
 
+# HTTP saliente legado en servicios, previo a la regla [ALERT-DISPATCH]
+# (2026-07-18, ADR-0027) — grandfathered, no se refactoriza retroactivamente:
+# insights_service consulta Ollama local via httpx desde antes del puerto.
+_SERVICIOS_HTTP_GRANDFATHERED = {"core/services/insights_service.py"}
+
+# Modulos de TRANSPORTE HTTP (urllib.parse queda fuera: parsear una URL no
+# es abrir una conexion).
+RE_HTTP_SALIENTE = re.compile(
+    r"^\s*(from|import)\s+(urllib\.request|requests|httpx|aiohttp|http\.client)\b"
+)
+
+
+def check_notificaciones(archivos: list[str]) -> list[str]:
+    """
+    Fase 29 (ADR-0027) [ALERT-DISPATCH]: una alerta de SLO detectada no puede
+    quedarse solo en el log.
+      1. Existen el puerto (notification_port) y el despachador
+         (notification_service), y alert_service enruta los eventos por el.
+      2. Ningun servicio NUEVO abre transporte HTTP directamente — los
+         webhooks viven en core/adapters/ (hexagonal, ADR-0004).
+      3. Suite espejo del despachador en verde; la del adaptador ya la
+         exige [OT-TEST] por ser core/adapters/*_adapter.py.
+    """
+    errores = []
+    if not (RAIZ / "core/ports/notification_port.py").is_file():
+        errores.append("  [ALERT-DISPATCH] falta core/ports/notification_port.py")
+    if "notification_service" not in "\n".join(leer("core/services/alert_service.py")):
+        errores.append(
+            "  [ALERT-DISPATCH] alert_service no despacha via notification_service"
+        )
+    for rel in archivos:
+        if not (rel.startswith("core/services/") and rel.endswith(".py")):
+            continue
+        if rel in _SERVICIOS_HTTP_GRANDFATHERED:
+            continue
+        for n, linea in enumerate(leer(rel), 1):
+            if RE_HTTP_SALIENTE.match(linea):
+                errores.append(
+                    f"  [ALERT-DISPATCH] {rel}:{n}: transporte HTTP en un servicio "
+                    f"-> muevelo a un adaptador NotificationPort (ADR-0027)"
+                )
+    errores += _correr_suite("tests.observability.test_notificaciones", "ALERT-DISPATCH")
+    return errores
+
+
 def main() -> int:
     archivos = inventario()
     print(f"Guardian de Arquitectura — {len(archivos)} archivos inventariados")
@@ -1152,6 +1200,7 @@ def main() -> int:
     errores += check_industrial_action(archivos)
     errores += check_intent_safety(archivos)
     errores += check_integracion()
+    errores += check_notificaciones(archivos)
 
     if errores:
         print(f"\nVIOLACIONES ({len(errores)}):")
