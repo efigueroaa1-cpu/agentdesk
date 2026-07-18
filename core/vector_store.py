@@ -246,6 +246,33 @@ class VectorStoreHermes:
             logger.warning("Hermes: buscar fallo (%s) — sin memoria esta vez", exc)
             return []
 
+    def purgar_antiguos(self, dias: int) -> int:
+        """
+        Retencion GDPR (Fase 26, ADR-0024; politica de ADR-0018): ELIMINA
+        los recuerdos tipo "interaccion" mas viejos que `dias`. Se borra
+        la fila completa (no se anonimiza como en auditoria_ia): el
+        embedding ES una proyeccion del contenido — anonimizar el texto
+        dejando el vector seria conservar la huella de la PII. Ademas
+        mantiene la base vectorial ligera. Las recetas tipo "habilidad"
+        NO se purgan: son artefactos curados de conocimiento operativo,
+        no conversaciones (documentado en ADR-0024).
+        Retorna filas eliminadas; nunca lanza (best-effort).
+        """
+        try:
+            corte = time.time() - max(1, int(dias)) * 86400
+            with self._lock, self._conn() as c:
+                cur = c.execute(
+                    "DELETE FROM memoria_vectorial "
+                    "WHERE tipo = 'interaccion' AND ts < ?", (corte,))
+                n = cur.rowcount or 0
+            if n:
+                logger.info("Hermes: purga de retencion — %d recuerdo(s) "
+                            "mas viejos que %d dias eliminados", n, dias)
+            return n
+        except Exception as exc:
+            logger.warning("Hermes: purga fallo (%s) — reintenta el proximo ciclo", exc)
+            return 0
+
     def contar(self, *, user_id: str, proyecto_id: str) -> int:
         self._exigir_scope(user_id, proyecto_id)
         with self._lock, self._conn() as c:

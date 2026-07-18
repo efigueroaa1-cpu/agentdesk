@@ -40,10 +40,28 @@ SENSORES: list[dict] = [
 ]
 
 
+# Tags ESCRIBIBLES ([INDUSTRIAL-ACTION], ADR-0024): min_escritura/max_escritura
+# es el limite fisico de seguridad — ningun comando puede cruzarlo, lo valida
+# el filtro determinista de base.py antes de tocar la red.
+ACTUADORES: list[dict] = [
+    {
+        "id": "reset_alarma_e117", "nombre": "Reset Alarma E-117",
+        "registro": 40100, "unit": 1, "escala": 1.0, "unidad": "",
+        "min_escritura": 0.0, "max_escritura": 1.0,
+    },
+    {
+        "id": "setpoint_temp_reactor_2", "nombre": "Setpoint Temperatura Reactor 2",
+        "registro": 40010, "unit": 1, "escala": 0.1, "unidad": "°C",
+        "min_escritura": 20.0, "max_escritura": 205.0,
+    },
+]
+
+
 class ModbusTelemetryAdapter(BaseTelemetryAdapter):
-    """TelemetryPort sobre Modbus TCP; sin host configurado usa SimuladorPlanta."""
+    """TelemetryPort + ActuationPort sobre Modbus TCP; sin host usa SimuladorPlanta."""
 
     SENSORES = SENSORES
+    ACTUADORES = ACTUADORES
 
     def __init__(self, host: str | None = None, intervalo_s: float = 5.0, **kw):
         super().__init__(intervalo_s=intervalo_s, **kw)
@@ -80,6 +98,35 @@ class ModbusTelemetryAdapter(BaseTelemetryAdapter):
         if respuesta.isError():
             raise ConnectionError(f"Modbus error leyendo {sensor['registro']}: {respuesta}")
         return round(respuesta.registers[0] * sensor["escala"], 2)
+
+    def _escribir_valor(self, actuador: dict, valor: float) -> str:
+        """
+        Escritura real de un holding register (Modbus Write, ADR-0024).
+        Sin host o sin pymodbus: registro simulado (default de base.py).
+        El comando YA paso el filtro determinista de escribir_tag().
+        """
+        if not self._host:
+            return super()._escribir_valor(actuador, valor)
+        try:
+            from pymodbus.client import ModbusTcpClient  # noqa: F401
+        except ImportError:
+            logger.warning("pymodbus no instalado — escritura '%s' en modo simulador.",
+                           actuador["id"])
+            return super()._escribir_valor(actuador, valor)
+
+        if self._cliente is None:
+            from pymodbus.client import ModbusTcpClient
+            host, _, puerto = self._host.partition(":")
+            self._cliente = ModbusTcpClient(host, port=int(puerto or 502))
+            self._cliente.connect()
+
+        offset = actuador["registro"] - 40001
+        crudo  = int(round(valor / actuador["escala"]))
+        respuesta = self._cliente.write_register(offset, crudo, slave=actuador["unit"])
+        if respuesta.isError():
+            raise ConnectionError(
+                f"Modbus error escribiendo {actuador['registro']}: {respuesta}")
+        return f"write_register({actuador['registro']}={crudo})"
 
     async def _reconectar(self) -> None:
         """Cierra el cliente Modbus roto para forzar una conexión nueva (ADR-0012)."""

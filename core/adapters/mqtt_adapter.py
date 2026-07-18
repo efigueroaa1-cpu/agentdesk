@@ -57,10 +57,27 @@ SENSORES: list[dict] = [
 ]
 
 
+# Tags ESCRIBIBLES ([INDUSTRIAL-ACTION], ADR-0024): topics de comando con
+# limite fisico de seguridad validado por el filtro determinista de base.py.
+ACTUADORES: list[dict] = [
+    {
+        "id": "setpoint_horno_1", "nombre": "Setpoint Horno 1",
+        "topic": "planta/horno1/cmd/setpoint", "unidad": "°C",
+        "min_escritura": 20.0, "max_escritura": 235.0,
+    },
+    {
+        "id": "reset_alarma_linea_a", "nombre": "Reset Alarma Linea A",
+        "topic": "planta/lineaA/cmd/reset_alarma", "unidad": "",
+        "min_escritura": 0.0, "max_escritura": 1.0,
+    },
+]
+
+
 class MqttTelemetryAdapter(BaseTelemetryAdapter):
-    """TelemetryPort sobre MQTT; sin broker configurado usa SimuladorPlanta."""
+    """TelemetryPort + ActuationPort sobre MQTT; sin broker usa SimuladorPlanta."""
 
     SENSORES = SENSORES
+    ACTUADORES = ACTUADORES
 
     def __init__(self, broker: str | None = None, intervalo_s: float = 5.0, **kw):
         super().__init__(intervalo_s=intervalo_s, **kw)
@@ -81,6 +98,30 @@ class MqttTelemetryAdapter(BaseTelemetryAdapter):
             await self._ciclo_mqtt()
             return
         await super().ciclo(max_ticks=max_ticks)
+
+    def _escribir_valor(self, actuador: dict, valor: float) -> str:
+        """
+        Publicacion real de comando (MQTT Publish, ADR-0024). Sin broker o
+        sin paho-mqtt: registro simulado (default de base.py). El comando
+        YA paso el filtro determinista de escribir_tag().
+        """
+        if not self._broker:
+            return super()._escribir_valor(actuador, valor)
+        try:
+            import paho.mqtt.publish as publish
+        except ImportError:
+            logger.warning("paho-mqtt no instalado — comando '%s' en modo simulador.",
+                           actuador["id"])
+            return super()._escribir_valor(actuador, valor)
+
+        import json as _json
+        host, _, puerto = self._broker.partition(":")
+        publish.single(
+            actuador["topic"],
+            payload=_json.dumps({"valor": valor}),
+            hostname=host, port=int(puerto or 1883), qos=1,
+        )
+        return f"publish({actuador['topic']})"
 
     async def _ciclo_mqtt(self) -> None:
         """Suscripción a un broker MQTT real (requiere paho-mqtt instalado)."""

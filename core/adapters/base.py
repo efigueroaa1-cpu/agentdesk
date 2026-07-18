@@ -16,6 +16,7 @@ import asyncio
 import logging
 import math
 import random
+import time
 from collections import deque
 from typing import Awaitable, Callable
 
@@ -108,6 +109,8 @@ class BaseTelemetryAdapter:
         self._max_cola = max_cola
         self._task: asyncio.Task | None = None
         self.reactor = ReactorIndustrial()
+        # Escrituras efectuadas en modo simulador (evidencia para tests/demo)
+        self.escrituras: list[dict] = []
 
     # ── A definir por cada protocolo ──────────────────────────────────────
 
@@ -157,6 +160,68 @@ class BaseTelemetryAdapter:
             return False
         self._estado[fuente_id]["intervalo_min"] = int(intervalo_min)
         return True
+
+    # ── Contrato ActuationPort (Fase 26, ADR-0024) ────────────────────────
+    # ACTUADORES: catalogo de tags ESCRIBIBLES del adaptador. Cada entrada
+    # exige min_escritura/max_escritura ([INDUSTRIAL-ACTION]): el limite
+    # fisico de seguridad que ningun comando puede cruzar — se valida con
+    # aritmetica pura, jamas con el juicio de un LLM.
+    ACTUADORES: list[dict] = []
+
+    def actuadores(self) -> list[dict]:
+        return [dict(a) for a in self.ACTUADORES]
+
+    def _validar_comando(self, tag_id: str, valor) -> tuple[dict | None, str]:
+        """
+        Filtro determinista pre-salida. Retorna (actuador, "") si el
+        comando es seguro, o (None, motivo) si se rechaza.
+        """
+        actuador = next((a for a in self.ACTUADORES if a["id"] == tag_id), None)
+        if actuador is None:
+            return None, f"tag '{tag_id}' no existe en el catalogo de actuadores"
+        try:
+            v = float(valor)
+        except (TypeError, ValueError):
+            return None, f"valor no numerico: {valor!r}"
+        if not (actuador["min_escritura"] <= v <= actuador["max_escritura"]):
+            return None, (f"valor {v} fuera del limite fisico de seguridad "
+                          f"[{actuador['min_escritura']}, {actuador['max_escritura']}]")
+        return actuador, ""
+
+    def escribir_tag(self, tag_id: str, valor: float) -> dict:
+        """
+        Escritura hacia la planta. TODO comando pasa por _validar_comando
+        ANTES de tocar la red; un rechazo queda en AUDITORIA_SEGURIDAD.
+        En modo simulador la escritura se registra en self.escrituras
+        (evidencia verificable para tests y demo, sin hardware).
+        """
+        actuador, motivo = self._validar_comando(tag_id, valor)
+        if actuador is None:
+            logger.warning(
+                "AUDITORIA_SEGURIDAD: comando OT RECHAZADO por filtro "
+                "determinista — tag=%s valor=%r motivo=%s", tag_id, valor, motivo,
+            )
+            return {"ok": False, "tag_id": tag_id, "valor": valor, "detalle": motivo}
+        try:
+            detalle = self._escribir_valor(actuador, float(valor))
+            logger.info("COMANDO_OT: escritura OK — tag=%s valor=%s via %s (%s)",
+                        tag_id, valor, self.protocolo(), detalle)
+            return {"ok": True, "tag_id": tag_id, "valor": float(valor),
+                    "detalle": detalle}
+        except Exception as exc:
+            logger.warning("COMANDO_OT: escritura FALLO — tag=%s valor=%s (%s)",
+                           tag_id, valor, exc)
+            return {"ok": False, "tag_id": tag_id, "valor": valor, "detalle": str(exc)}
+
+    def _escribir_valor(self, actuador: dict, valor: float) -> str:
+        """
+        Escritura fisica (a definir por cada protocolo). El default —
+        valido para el modo simulador de cualquier adaptador — registra
+        el comando en self.escrituras sin tocar la red.
+        """
+        self.escrituras.append({"tag_id": actuador["id"], "valor": valor,
+                                "ts": time.time()})
+        return "simulada"
 
     # ── Normalización y difusión resiliente ───────────────────────────────
 

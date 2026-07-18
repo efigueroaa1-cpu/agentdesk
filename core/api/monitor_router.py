@@ -308,6 +308,52 @@ async def analytics_roi(req: Request, proyecto_id: str = "", dias: int = 30) -> 
     }
 
 
+@router.get("/ot/acciones")
+async def ot_acciones(req: Request, estado: str = "") -> dict:
+    """
+    Bandeja de propuestas de comando OT (ADR-0024). Supervisor+ — es la
+    vista de aprobacion Human-in-the-loop del dashboard.
+    """
+    from core.auth import tiene_permiso
+    if not tiene_permiso(getattr(req.state, "rol", "viewer"), "supervisor"):
+        raise HTTPException(403, detail="Se requiere rol supervisor o admin.")
+    from core.services.ot_command_service import ot_service
+    return {"acciones": ot_service.listar(estado or None),
+            "adaptadores": ot_service.adaptadores()}
+
+
+@router.post("/ot/acciones/{propuesta_id}/aprobar")
+async def ot_aprobar(propuesta_id: int, req: Request) -> dict:
+    """
+    Confirmacion de Operador (Human-in-the-loop, ADR-0024): ejecuta el
+    comando propuesto. Supervisor+ OBLIGATORIO — este es el punto exacto
+    donde un humano autoriza la escritura hacia la planta.
+    """
+    from core.auth import tiene_permiso
+    if not tiene_permiso(getattr(req.state, "rol", "viewer"), "supervisor"):
+        raise HTTPException(403, detail="Se requiere rol supervisor o admin.")
+    from core.services.ot_command_service import ot_service
+    user_id = getattr(req.state, "user_id", "anonimo")
+    resultado = ot_service.aprobar(propuesta_id, user_id=user_id)
+    if not resultado["ok"] and "propuesta" not in resultado:
+        raise HTTPException(400, detail=resultado["detalle"])
+    return resultado
+
+
+@router.post("/ot/acciones/{propuesta_id}/rechazar")
+async def ot_rechazar(propuesta_id: int, req: Request, motivo: str = "") -> dict:
+    """Rechazo explicito del operador (queda auditado). Supervisor+."""
+    from core.auth import tiene_permiso
+    if not tiene_permiso(getattr(req.state, "rol", "viewer"), "supervisor"):
+        raise HTTPException(403, detail="Se requiere rol supervisor o admin.")
+    from core.services.ot_command_service import ot_service
+    user_id = getattr(req.state, "user_id", "anonimo")
+    resultado = ot_service.rechazar(propuesta_id, user_id=user_id, motivo=motivo)
+    if not resultado["ok"]:
+        raise HTTPException(400, detail=resultado["detalle"])
+    return resultado
+
+
 @router.post("/analytics/riesgo-ot/{proyecto_id}")
 async def analytics_riesgo_ot(proyecto_id: str, req: Request,
                               analista_id: str = "") -> dict:

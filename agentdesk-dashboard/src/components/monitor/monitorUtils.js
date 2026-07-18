@@ -10,6 +10,7 @@ export const MONITOR_TABS = [
   { id: "energia", label: "⚡ Energía" },
   { id: "historial", label: "📊 Historial" },
   { id: "alertas", label: "🔔 Alertas" },
+  { id: "acciones", label: "🦾 Acciones OT" },
 ];
 
 export const RACHA_ICON = {

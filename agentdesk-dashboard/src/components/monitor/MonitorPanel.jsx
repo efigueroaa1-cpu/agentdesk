@@ -10,6 +10,7 @@ import LeaguesTab from "./LeaguesTab";
 import EnergyTab from "./EnergyTab";
 import HistoryTab from "./HistoryTab";
 import AlertsTab from "./AlertsTab";
+import OTAccionesTab from "./OTAccionesTab";
 
 export default function MonitorPanel() {
   const [tab, setTab] = useState("automatico");
@@ -30,6 +31,7 @@ export default function MonitorPanel() {
       <HistoryTab historial={historial} onCargar={acciones.cargarHistorial} />
     ),
     alertas: <AlertsTab alertas={alertas} onCargar={acciones.cargarAlertas} />,
+    acciones: <OTAccionesTab />,
   };
 
   return (

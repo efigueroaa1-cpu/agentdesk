@@ -79,7 +79,9 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # + set_orquestador() (delegacion cognitiva Speak/Listen)
     # subio 1209->1217 (2026-07-15, ADR-0014): span OTEL tool.ejecutar
     # envolviendo el dispatcher (_despachar_herramienta)
-    "core/tools.py":                                                    1217,
+    # subio 1217->1282 (2026-07-17, ADR-0024): herramienta proponer_comando_ot
+    # (schema + dispatch + impl — el agente PROPONE, jamas ejecuta)
+    "core/tools.py":                                                    1282,
     # web_monitor.py subio 593->595 (2026-07-14): validacion de esquema http(s)
     "core/web_monitor.py":                                               595,
     # database.py subio 495->580 (2026-07-15, ADR-0013): migraciones Alembic
@@ -107,7 +109,9 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # RSA + escaneo de control externo en fuente y binario) + check_onboarding
     # subio 978->1045 (2026-07-17, ADR-0023): regla [SEMANTIC-PRIVACY] (scope
     # user_id+proyecto_id en llamadas Hermes por AST de parentesis) + suite memory
-    "scripts/gate.py":                                                  1045,
+    # subio 1045->1110 (2026-07-17, ADR-0024): regla [INDUSTRIAL-ACTION]
+    # (limites fisicos de escritura + filtro determinista + RBAC en /ot/)
+    "scripts/gate.py":                                                  1110,
     "dashboard.py":                                                     1257,
     "ui/dashboard.py":                                                  1257,
     # providers.py subio de <500 a 528 (2026-07-16, ADR-0017): generate_con_uso()
@@ -946,6 +950,66 @@ def check_semantic_privacy(archivos: list[str]) -> list[str]:
     return errores
 
 
+# Actuacion industrial (Fase 26, ADR-0024): escribir hacia la planta puede
+# mover fierros — cada tag escribible exige limite fisico de seguridad, y
+# ningun endpoint de aprobacion puede quedar sin RBAC supervisor+.
+def check_industrial_action(archivos: list[str]) -> list[str]:
+    """
+    ADR-0024 [INDUSTRIAL-ACTION]:
+      1. Todo catalogo ACTUADORES (core/adapters/*.py) declara
+         min_escritura/max_escritura numericos con min < max (por AST,
+         igual que [INDUSTRIAL-INTEGRITY]).
+      2. base.py aplica el filtro determinista (_validar_comando) dentro
+         de escribir_tag() — la escritura sin filtro queda prohibida.
+      3. Todo endpoint POST /ot/ exige tiene_permiso(...) con "supervisor"
+         DENTRO del handler (Human-in-the-loop con RBAC real).
+    """
+    import ast as _ast
+    errores = []
+
+    for ruta in archivos:
+        if not ruta.replace("\\", "/").startswith("core/adapters/") or not ruta.endswith(".py"):
+            continue
+        texto = "\n".join(leer(ruta))
+        m = re.search(r"^ACTUADORES:\s*list\[dict\]\s*=\s*(\[.*?\n\])", texto,
+                      re.M | re.S)
+        if not m:
+            continue
+        try:
+            catalogo = _ast.literal_eval(m.group(1))
+        except (ValueError, SyntaxError) as exc:
+            errores.append(f"  [OT-ACTION] {ruta}: catalogo ACTUADORES no es "
+                           f"literal evaluable ({exc})")
+            continue
+        for tag in catalogo:
+            mn, mx = tag.get("min_escritura"), tag.get("max_escritura")
+            if not isinstance(mn, (int, float)) or not isinstance(mx, (int, float)) or mn >= mx:
+                errores.append(
+                    f"  [OT-ACTION] {ruta}: tag '{tag.get('id')}' sin limite "
+                    f"fisico de seguridad valido (min_escritura < max_escritura)"
+                )
+
+    base = "\n".join(leer("core/adapters/base.py"))
+    m = re.search(r"def escribir_tag\(.*?(?=\n    def )", base, re.S)
+    if not m or "_validar_comando" not in m.group(0):
+        errores.append("  [OT-ACTION] core/adapters/base.py: escribir_tag() debe "
+                       "aplicar el filtro determinista _validar_comando()")
+
+    for ruta in archivos:
+        if not ruta.replace("\\", "/").startswith("core/api/") or not ruta.endswith(".py"):
+            continue
+        texto = "\n".join(leer(ruta))
+        for m in re.finditer(r"@router\.post\(\"(/ot/[^\"]*)\"\)", texto):
+            fin = texto.find("@router.", m.end())
+            bloque = texto[m.start():fin if fin != -1 else len(texto)]
+            if "tiene_permiso" not in bloque or '"supervisor"' not in bloque:
+                errores.append(
+                    f"  [OT-ACTION] {ruta}: endpoint POST {m.group(1)} sin "
+                    f"RBAC supervisor+ dentro del handler"
+                )
+    return errores
+
+
 def check_memoria_hermes() -> list[str]:
     """Fase 25: suite de Memoria Hermes (persistencia, aislamiento, skills)."""
     proc = subprocess.run(
@@ -1026,6 +1090,7 @@ def main() -> int:
     errores += check_onboarding()
     errores += check_semantic_privacy(archivos)
     errores += check_memoria_hermes()
+    errores += check_industrial_action(archivos)
 
     if errores:
         print(f"\nVIOLACIONES ({len(errores)}):")

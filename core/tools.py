@@ -310,6 +310,42 @@ TOOLS_SCHEMA = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "proponer_comando_ot",
+            "description": (
+                "PROPONE un comando de escritura hacia la planta (Modbus/MQTT): "
+                "resetear una alarma, ajustar un setpoint. La propuesta NO se "
+                "ejecuta: queda pendiente de la aprobación de un operador humano "
+                "con rol supervisor (Human-in-the-loop, ADR-0024). Úsalo solo "
+                "cuando el diagnóstico esté claro, e incluye la justificación "
+                "técnica completa para que el operador pueda decidir."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "adaptador": {
+                        "type": "string",
+                        "description": "Protocolo destino: 'modbus' o 'mqtt'.",
+                    },
+                    "tag_id": {
+                        "type": "string",
+                        "description": "Tag escribible del catálogo de actuadores. Ej: 'reset_alarma_e117'.",
+                    },
+                    "valor": {
+                        "type": "number",
+                        "description": "Valor a escribir (debe estar dentro del límite físico del tag).",
+                    },
+                    "justificacion": {
+                        "type": "string",
+                        "description": "Diagnóstico y razón técnica de la acción propuesta.",
+                    },
+                },
+                "required": ["adaptador", "tag_id", "valor", "justificacion"],
+            },
+        },
+    },
 ]
 
 
@@ -1150,6 +1186,26 @@ async def _consultar_a_otro_agente(agente_id: str, pregunta: str, *,
                                  user_id=user_id)
 
 
+def _proponer_comando_ot(*, adaptador: str, tag_id: str, valor,
+                          justificacion: str, agente_id: str,
+                          user_id: str) -> str:
+    """
+    Propuesta de escritura OT (ADR-0024). El agente jamas ejecuta: crea
+    una propuesta que pasa el filtro determinista de limites fisicos y
+    queda PENDIENTE de la aprobacion de un operador supervisor+.
+    """
+    from core.services.ot_command_service import ot_service
+    resultado = ot_service.proponer(
+        adaptador=adaptador, tag_id=tag_id, valor=valor,
+        justificacion=justificacion, agente_id=agente_id, user_id=user_id,
+    )
+    if not resultado["ok"]:
+        return f"PROPUESTA RECHAZADA: {resultado['detalle']}"
+    return (f"Propuesta #{resultado['propuesta_id']} creada: "
+            f"{adaptador}.{tag_id} = {valor}. {resultado['detalle']}. "
+            "Informa al operador que debe aprobarla en el panel Monitor > Acciones OT.")
+
+
 async def ejecutar_herramienta(nombre: str, argumentos: dict, *,
                                 agente_id_clave: str = "", user_id: str = "anonimo") -> str:
     """Ejecuta una herramienta por nombre y devuelve el resultado como string."""
@@ -1167,6 +1223,15 @@ async def _despachar_herramienta(nombre: str, argumentos: dict, *,
             return await _consultar_a_otro_agente(
                 argumentos["agente_id"], argumentos["pregunta"],
                 origen_id=agente_id_clave, user_id=user_id,
+            )
+        if nombre == "proponer_comando_ot":
+            return _proponer_comando_ot(
+                adaptador     = argumentos["adaptador"],
+                tag_id        = argumentos["tag_id"],
+                valor         = argumentos["valor"],
+                justificacion = argumentos["justificacion"],
+                agente_id     = agente_id_clave,
+                user_id       = user_id,
             )
         if nombre == "buscar_web":
             return await _buscar_web(
