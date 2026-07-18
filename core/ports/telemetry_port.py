@@ -72,3 +72,35 @@ class TelemetryPort(Protocol):
     def cambiar_frecuencia(self, fuente_id: int | str, intervalo_min: int) -> bool:
         """Ajusta el intervalo de muestreo de una fuente."""
         ...
+
+
+@runtime_checkable
+class ActuationPort(Protocol):
+    """
+    Puerto de ACTUACION (Fase 26, ADR-0024): escritura hacia la planta
+    (Modbus write, MQTT publish). Protocolo SEPARADO de TelemetryPort a
+    proposito — leer es inocuo, escribir puede mover fierros: un adaptador
+    solo-lectura no debe verse obligado a implementar escritura, y el
+    codigo que actua debe declararlo pidiendo ESTE puerto.
+
+    Contrato de seguridad (obligatorio para toda implementacion):
+      - `actuadores()` expone el catalogo con limites fisicos de escritura
+        (min_escritura/max_escritura) por tag.
+      - `escribir_tag()` DEBE pasar el comando por el filtro determinista
+        de limites ANTES de tocar la red, y rechazar con auditoria todo
+        valor fuera de rango. Nunca decide un LLM: solo valida aritmetica.
+      - La aprobacion humana (Human-in-the-loop) NO vive aqui: es previa,
+        en ot_command_service — este puerto asume comandos YA aprobados.
+    """
+
+    def actuadores(self) -> list[dict]:
+        """Catalogo de tags escribibles con sus limites de seguridad."""
+        ...
+
+    def escribir_tag(self, tag_id: str, valor: float) -> dict:
+        """
+        Escribe un valor en un tag (write_tag). Retorna
+        {"ok", "tag_id", "valor", "detalle"}; ok=False si el filtro
+        determinista rechazo el comando o la escritura fallo.
+        """
+        ...

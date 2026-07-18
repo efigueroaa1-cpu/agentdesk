@@ -64,6 +64,10 @@ RUTAS_PUBLICAS_AUTORIZADAS: frozenset[tuple[str, str]] = frozenset({
     # Fase 25 (ADR-0023): extraccion de habilidades — RBAC supervisor+
     # dentro del handler; el scope user_id sale del token, no del payload.
     ("POST", "/skills/extraer"),
+    # Fase 26 (ADR-0024): Human-in-the-loop OT — RBAC supervisor+ dentro
+    # del handler (el guardian [INDUSTRIAL-ACTION] verifica que siga ahi).
+    ("POST", "/ot/acciones/{propuesta_id}/aprobar"),
+    ("POST", "/ot/acciones/{propuesta_id}/rechazar"),
     ("PUT",  "/update/url"),
     # Map-Reduce (Fase 21, ADR-0019): RBAC supervisor+ dentro del handler
     # (dispara N llamadas reales a LLM, mismo criterio que /auditoria/*)

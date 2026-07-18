@@ -300,6 +300,17 @@ def purgar_registros_antiguos(dias: int | None = None) -> int:
             "AUDITORIA_SEGURIDAD: purga de retencion anonimizo %d fila(s) "
             "anteriores a %s (retencion=%d dias)", n, corte.isoformat(), dias_efectivos,
         )
+
+    # Memoria Hermes (Fase 26, ADR-0024): misma politica de retencion —
+    # los recuerdos vectoriales viejos se ELIMINAN (el embedding es una
+    # proyeccion del contenido; anonimizar el texto no bastaria). Deuda de
+    # ADR-0023 saldada. Best-effort independiente de la purga de arriba.
+    try:
+        from core.vector_store import hermes
+        hermes().purgar_antiguos(dias_efectivos)
+    except Exception as exc:
+        logger.warning("AUDITORIA_SEGURIDAD: purga Hermes no ejecutada (%s)", exc)
+
     return n
 
 
