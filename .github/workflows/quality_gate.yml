@@ -1,0 +1,91 @@
+# AgentDesk — Quality Gate remoto (Fase 28, ADR-0026).
+# Replica EXACTAMENTE los 4 checks del gate.ps1 local + la suite completa
+# + el build del frontend con presupuesto de bundle. Si cualquier regla
+# falla, el push/PR queda BLOQUEADO. El QA Scorecard se publica como
+# artefacto de cada build.
+name: quality-gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      # Soberania de suministro: SOLO el lockfile (versiones exactas).
+      - name: Instalar dependencias desde el lockfile
+        run: python -m pip install -r requirements.txt
+
+      - name: "Gate 1/4 — etiquetas TODO/FIXME/PATCH + residuos + seguridad"
+        shell: pwsh
+        run: .\gate.ps1
+
+      - name: Suite completa de tests
+        run: python -m unittest discover -s tests -t . -p "test_*.py" -v
+
+      - name: Generar QA Scorecard
+        if: always()
+        run: python scripts/qa_scorecard.py --salida qa_scorecard.json
+
+      - name: Publicar QA Scorecard
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-scorecard
+          path: |
+            qa_scorecard.json
+            qa_scorecard.md
+
+  frontend:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: agentdesk-dashboard
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: agentdesk-dashboard/package-lock.json
+
+      - name: Instalar dependencias (lockfile npm)
+        run: npm ci --legacy-peer-deps
+
+      - name: ESLint
+        run: npx eslint src
+
+      - name: Build de produccion
+        run: npm run build
+
+      # Presupuesto de bundle inicial (<500 KB) para hardware de planta
+      # modesto: index.js + vendor.js + css referenciados por index.html.
+      - name: Verificar presupuesto de bundle inicial
+        shell: pwsh
+        run: |
+          $html = Get-Content dist/index.html -Raw
+          $iniciales = [regex]::Matches($html, 'assets/[\w.-]+\.(js|css)') |
+              ForEach-Object { $_.Value } | Select-Object -Unique
+          $total = 0
+          foreach ($a in $iniciales) {
+              $f = Join-Path "dist" $a
+              $kb = [math]::Round((Get-Item $f).Length / 1KB, 1)
+              Write-Host ("  {0} = {1} KB" -f $a, $kb)
+              $total += $kb
+          }
+          Write-Host ("BUNDLE INICIAL: {0} KB (presupuesto 500 KB)" -f [math]::Round($total, 1))
+          if ($total -ge 500) {
+              Write-Error "Bundle inicial $total KB >= 500 KB — presupuesto excedido."
+              exit 1
+          }
