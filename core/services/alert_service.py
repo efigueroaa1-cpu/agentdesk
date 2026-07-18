@@ -132,10 +132,17 @@ async def iniciar_monitor(intervalo_s: float = INTERVALO_CHEQUEO_S) -> None:
     Loop de fondo (mismo patrón que `kill_switch.iniciar_monitor()`):
     corre `chequear_slos()` cada `intervalo_s` hasta que la tarea se cancele.
     Registrado como `asyncio.create_task()` en `core/api/__init__.py::startup()`.
+
+    Fase 29 (ADR-0027): cada evento detectado se despacha además por los
+    canales de notificación registrados (Slack/WhatsApp) — la alerta ya no
+    depende de que un operador esté mirando el log o el dashboard.
     """
+    from core.services.notification_service import notification_service
+
     while True:
         try:
-            chequear_slos()
+            for evento in chequear_slos():
+                notification_service.notificar(evento)
         except Exception as exc:
             logger.warning("ALERT_SERVICE: ciclo de monitoreo fallo (%s)", exc)
         try:
