@@ -110,6 +110,12 @@ class JWTMiddleware(BaseHTTPMiddleware):
             if datos:
                 request.state.usuario = datos.get("sub")
                 request.state.rol     = datos.get("role", "viewer")
+                # Alias user_id (Fase 28): varios endpoints (mapreduce,
+                # skills, OT, copiloto) leen request.state.user_id — sin
+                # este alias auditaban SIEMPRE como "anonimo" y el scope
+                # por usuario no funcionaba via HTTP (bug cazado por el
+                # blitz de integracion, ADR-0026).
+                request.state.user_id = datos.get("sub")
         except Exception:
             pass
 

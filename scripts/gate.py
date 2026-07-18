@@ -113,7 +113,9 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # (limites fisicos de escritura + filtro determinista + RBAC en /ot/)
     # subio 1110->1154 (2026-07-17, ADR-0025): regla [INTENT-SAFETY]
     # (el Copiloto propone, jamas ejecuta; filtro obligatorio + suite intent)
-    "scripts/gate.py":                                                  1154,
+    # subio 1154->1171 (2026-07-17, ADR-0026): check_integracion (blitz de
+    # integracion cruzada en cada gate, espejo del CI remoto)
+    "scripts/gate.py":                                                  1171,
     "dashboard.py":                                                     1257,
     "ui/dashboard.py":                                                  1257,
     # providers.py subio de <500 a 528 (2026-07-16, ADR-0017): generate_con_uso()
@@ -1067,6 +1069,20 @@ def check_memoria_hermes() -> list[str]:
            [f"    {linea}" for linea in detalle]
 
 
+def check_integracion() -> list[str]:
+    """Fase 28: blitz de integracion cruzada (Hermes->Intent->OT->Gantt via HTTP)."""
+    proc = subprocess.run(
+        [sys.executable, "-m", "unittest", "discover", "-s", "tests/integration",
+         "-t", ".", "-p", "test_*.py"],
+        cwd=RAIZ, capture_output=True, text=True,
+    )
+    if proc.returncode == 0:
+        return []
+    detalle = (proc.stderr or proc.stdout or "").strip().splitlines()[-25:]
+    return ["  [INTEGRACION] tests/integration FALLO:"] + \
+           [f"    {linea}" for linea in detalle]
+
+
 def check_onboarding() -> list[str]:
     """Fase 24: suite E2E del flujo de bienvenida (primer arranque offline)."""
     proc = subprocess.run(
@@ -1135,6 +1151,7 @@ def main() -> int:
     errores += check_memoria_hermes()
     errores += check_industrial_action(archivos)
     errores += check_intent_safety(archivos)
+    errores += check_integracion()
 
     if errores:
         print(f"\nVIOLACIONES ({len(errores)}):")
