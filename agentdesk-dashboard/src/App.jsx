@@ -54,6 +54,7 @@ const ProyectosModule = lazy(
 const FinancialModule = lazy(() => import("./components/hub/FinancialModule"));
 const GanttModule = lazy(() => import("./components/hub/GanttModule"));
 const EmbeddingView3D = lazy(() => import("./components/hub/EmbeddingView3D"));
+const CopilotPanel = lazy(() => import("./components/copilot/CopilotPanel"));
 
 const TABS = [
   ["dashboard", "Dashboard"],
@@ -71,6 +72,7 @@ const TABS = [
   ["proyectos", "Proyectos"],
   ["financiero", "Financiero"],
   ["gantt", "Gantt P6"],
+  ["copiloto", "Copiloto"],
   ["security", "Seguridad"],
 ];
 
@@ -92,6 +94,7 @@ const NAV_TO_VIEW = {
   14: "proyectos",
   15: "financiero",
   16: "gantt",
+  17: "copiloto",
 };
 
 // Pills de navegación superiores: ocultas por CSS (.tab-pills) — la navegación
@@ -179,6 +182,7 @@ function Dashboard() {
           proyectos: "Proyectos",
           financiero: "Financiero",
           gantt: "Gantt P6",
+          copiloto: "Copiloto",
           security: "Seguridad",
         }[view]
       }
@@ -337,6 +341,11 @@ function Dashboard() {
         {view === "diagnostico" && (
           <ErrorBoundary>
             <DiagnosticsPanel />
+          </ErrorBoundary>
+        )}
+        {view === "copiloto" && (
+          <ErrorBoundary>
+            <CopilotPanel />
           </ErrorBoundary>
         )}
         {view === "reportes" && (

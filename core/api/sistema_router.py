@@ -17,7 +17,8 @@ from starlette.requests import Request
 from core.timeutil import utcnow
 from core import kill_switch
 import core.api._state as _state
-from core.api.schemas import (KillSwitchLicenciaRequest, KillSwitchToggleRequest,
+from core.api.schemas import (CopilotoAplicarRequest, CopilotoPlanRequest,
+                              KillSwitchLicenciaRequest, KillSwitchToggleRequest,
                               MapReduceRequest, SkillExtraerRequest,
                               UpdateURLRequest)
 
@@ -198,6 +199,45 @@ async def auditoria_costos(req: Request, dias: int = 30) -> dict:
         raise HTTPException(403, detail="Se requiere rol supervisor o admin.")
     from core.services import audit_service
     return audit_service.resumen_costos(dias)
+
+
+@router.post("/copiloto/planificar")
+async def copiloto_planificar(req: Request, payload: CopilotoPlanRequest) -> dict:
+    """
+    Copiloto de Intencion (ADR-0025): objetivo en lenguaje natural -> plan
+    con pasos, habilidades Hermes, acciones OT YA filtradas por limites
+    fisicos y tareas Gantt propuestas. Supervisor+ (consulta LLM + expone
+    catalogo de actuadores).
+    """
+    from core.auth import tiene_permiso
+    if not tiene_permiso(getattr(req.state, "rol", "viewer"), "supervisor"):
+        raise HTTPException(403, detail="Se requiere rol supervisor o admin.")
+    from core.services import intent_service
+    user_id = getattr(req.state, "user_id", "anonimo")
+    try:
+        return await intent_service.planificar(
+            payload.objetivo, user_id=user_id, proyecto_id=payload.proyecto_id)
+    except ValueError as exc:
+        raise HTTPException(400, detail=str(exc))
+
+
+@router.post("/copiloto/aplicar")
+async def copiloto_aplicar(req: Request, payload: CopilotoAplicarRequest) -> dict:
+    """
+    Auto-programacion (ADR-0025): inserta el plan en el Gantt P6 con
+    impacto en Curva S antes/despues, y PROPONE las acciones OT a la
+    bandeja Human-in-the-loop (jamas las ejecuta). Supervisor+.
+    """
+    from core.auth import tiene_permiso
+    if not tiene_permiso(getattr(req.state, "rol", "viewer"), "supervisor"):
+        raise HTTPException(403, detail="Se requiere rol supervisor o admin.")
+    from core.services import intent_service
+    user_id = getattr(req.state, "user_id", "anonimo")
+    try:
+        return intent_service.aplicar_en_gantt(
+            payload.plan, payload.proyecto_id, user_id=user_id)
+    except ValueError as exc:
+        raise HTTPException(400, detail=str(exc))
 
 
 @router.get("/skills")
