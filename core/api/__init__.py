@@ -165,6 +165,23 @@ async def startup() -> None:
     except Exception as exc:
         logger.error("Purge service init error: %s", exc)
 
+    # Comando y Control OT (Fase 26, ADR-0024): composicion en el borde —
+    # los adaptadores de actuacion se INYECTAN aqui (services no importa
+    # core.adapters, ADR-0002/0004). Sin planta real configurada se
+    # registran en modo simulador: el flujo Human-in-the-loop completo
+    # (proponer -> aprobar -> escribir) es identico, sin hardware.
+    try:
+        from core.adapters.modbus_adapter import ModbusTelemetryAdapter
+        from core.adapters.mqtt_adapter import MqttTelemetryAdapter
+        from core.services.ot_command_service import ot_service
+        if not ot_service.adaptadores():
+            ot_service.registrar_adaptador("modbus", ModbusTelemetryAdapter())
+            ot_service.registrar_adaptador("mqtt", MqttTelemetryAdapter())
+        ot_service.conectar_broadcast(_state.manager.broadcast)
+        logger.info("OT Command Service listo (adaptadores: %s)", ot_service.adaptadores())
+    except Exception as exc:
+        logger.error("OT Command Service init error: %s", exc)
+
     # Auto-inicializar Orquestador si no hay bridge externo
     await _state._auto_iniciar_orquestador()
 

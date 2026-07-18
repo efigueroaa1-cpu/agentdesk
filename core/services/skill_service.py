@@ -86,11 +86,28 @@ def identificar_secuencias(
     ]
 
 
+def _validar_comandos_ot(comandos: list[dict]) -> list[dict]:
+    """
+    Habilidades de Accion (Fase 26, ADR-0024): una receta puede incluir
+    comandos OT. Aqui solo se valida la FORMA ({adaptador, tag_id, valor});
+    los limites fisicos y la aprobacion humana se aplican SIEMPRE al
+    proponer/ejecutar — una receta jamas salta el Human-in-the-loop.
+    """
+    validados = []
+    for c in comandos:
+        if not isinstance(c, dict) or not c.get("adaptador") or not c.get("tag_id"):
+            raise ValueError(f"comando OT invalido en la receta: {c!r}")
+        validados.append({"adaptador": str(c["adaptador"]), "tag_id": str(c["tag_id"]),
+                          "valor": float(c["valor"])})
+    return validados
+
+
 def extraer_habilidad(
     nombre: str, user_id: str,
     secuencia: list[str] | None = None,
     descripcion: str = "",
     proyecto_id: str = "",
+    comandos_ot: list[dict] | None = None,
 ) -> dict:
     """
     Congela una secuencia como receta reutilizable. Si no se pasa la
@@ -118,6 +135,7 @@ def extraer_habilidad(
             "nombre":      nombre,
             "descripcion": descripcion or f"Procedimiento aprendido: {' -> '.join(secuencia)}",
             "secuencia_herramientas": list(secuencia),
+            "comandos_ot": _validar_comandos_ot(comandos_ot or []),
             "ejemplo":     ejemplo,
             "user_id":     user_id,
             "creada":      time.time(),
@@ -175,4 +193,10 @@ def como_prompt(receta: dict) -> str:
     ejemplo = receta.get("ejemplo") or {}
     if ejemplo.get("prompt"):
         lineas.append(f"  Caso resuelto antes: \"{ejemplo['prompt'][:200]}\"")
+    for c in receta.get("comandos_ot", []):
+        lineas.append(
+            f"  Accion OT asociada: proponer_comando_ot(adaptador='{c['adaptador']}', "
+            f"tag_id='{c['tag_id']}', valor={c['valor']}) — SIEMPRE requiere "
+            "aprobacion del operador (Human-in-the-loop, ADR-0024)."
+        )
     return "\n".join(lineas)
