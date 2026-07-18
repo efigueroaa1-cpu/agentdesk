@@ -64,6 +64,19 @@ class OTCommandService:
         except Exception as exc:
             logger.warning("OT: broadcast fallo (%s) — flujo continua", exc)
 
+    def validar(self, adaptador: str, tag_id: str, valor) -> tuple[bool, str]:
+        """
+        Filtro determinista SIN efectos (Fase 27, [INTENT-SAFETY]): valida
+        un comando contra los limites fisicos del adaptador sin proponer
+        ni ejecutar nada. Es lo que el Motor de Intencion usa para no
+        mostrarle jamas al usuario una accion OT insegura.
+        """
+        ad = self._adaptadores.get(adaptador)
+        if ad is None:
+            return False, f"adaptador '{adaptador}' no registrado"
+        _act, motivo = ad._validar_comando(tag_id, valor)
+        return (motivo == ""), (motivo or "ok")
+
     # ── Flujo Human-in-the-loop ───────────────────────────────────────────
 
     def proponer(self, *, adaptador: str, tag_id: str, valor: float,

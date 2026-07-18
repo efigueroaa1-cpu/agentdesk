@@ -18,6 +18,7 @@ export const navigation = [
   { id: 14, label: "Proyectos", icon: "BarChart2", path: "/proyectos" },
   { id: 15, label: "Financiero", icon: "DollarSign", path: "/financiero" },
   { id: 16, label: "Gantt P6", icon: "Calendar", path: "/gantt" },
+  { id: 17, label: "Copiloto", icon: "Zap", path: "/copiloto" },
   { id: 13, label: "Seguridad", icon: "Shield", path: "/security" },
 ];
 

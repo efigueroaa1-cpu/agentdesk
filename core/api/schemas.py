@@ -80,6 +80,16 @@ class KillSwitchLicenciaRequest(BaseModel):
     contenido: str   # JSON completo de license.key (payload + firma RSA)
 
 
+class CopilotoPlanRequest(BaseModel):
+    objetivo:    str
+    proyecto_id: str = ""
+
+
+class CopilotoAplicarRequest(BaseModel):
+    plan:        dict   # el plan retornado por /copiloto/planificar
+    proyecto_id: str
+
+
 class SkillExtraerRequest(BaseModel):
     nombre:      str
     descripcion: str = ""
