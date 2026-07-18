@@ -26,3 +26,6 @@ jwt_secret.key
 *.exe
 RELEASE/
 .superpowers/
+
+qa_scorecard.json
+qa_scorecard.md

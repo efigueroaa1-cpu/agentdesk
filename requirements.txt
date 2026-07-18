@@ -1,54 +1,240 @@
-# AgentDesk — dependencias Python (Fase 7, higiene de dependencias)
-# Instalar:        pip install -r requirements.txt
-# Nota: PyInstaller empaqueta esto en el build de escritorio (build_all.ps1).
-
-# ── Núcleo web / API ───────────────────────────────────────────────────────
-fastapi>=0.138
-uvicorn>=0.49
-starlette>=1.3
-pydantic>=2.13
-httpx>=0.28
-
-# ── Persistencia (ADR-0005: modo dual; ADR-0013: migraciones reproducibles) ─
-SQLAlchemy>=2.0.51
-alembic>=1.18
-
-# ── Seguridad (JWT + RBAC + vault) ────────────────────────────────────────
-bcrypt>=5.0
-PyJWT>=2.13
-cryptography>=49.0
-
-# ── Proveedores LLM ───────────────────────────────────────────────────────
-google-genai>=2.9
-openai>=2.44
-anthropic>=0.112
-groq>=1.5
-
-# ── Reportes y datos ──────────────────────────────────────────────────────
-fpdf2>=2.8.7
-openpyxl>=3.1
-
-# ── CLI / utilidades ──────────────────────────────────────────────────────
-rich>=15.0
-python-dotenv>=1.2
-
-# ── Observabilidad (ADR-0014: tracing OTEL + metricas Prometheus) ─────────
-opentelemetry-api>=1.43
-opentelemetry-sdk>=1.43
-prometheus-client>=0.25
-
-# ── Calidad y gate (desarrollo) ───────────────────────────────────────────
-bandit>=1.9.4
-
-# ── Piloto industrial (ADR-0020) — requeridas en el equipo de BUILD para
-# que el instalador las empaquete (hiddenimports en agentdesk.spec) ────────
-psycopg2-binary>=2.9       # PostgreSQL (AGENTDESK_DB_URL) — engine ORM sincrono
-asyncpg>=0.31              # PostgreSQL — chequeo async de arranque (ADR-0013)
-celery>=5.6                # Queue Mode distribuido (AGENTDESK_QUEUE_URL, ADR-0019)
-redis>=8.0                 # cliente Redis: ping de deteccion de broker + backend Celery
-paho-mqtt>=2.0             # broker MQTT real (AGENTDESK_MQTT_BROKER)
-psutil>=5.9                # Circuit Breaker de Concurrencia (ADR-0019) + sandbox
-
-# ── Opcionales de planta (ADR-0004) — descomenta según despliegue ─────────
-# pymodbus>=3.6            # PLC Modbus TCP (AGENTDESK_MODBUS_HOST)
-# asyncua>=1.1             # servidor OPC-UA (AGENTDESK_OPCUA_ENDPOINT)
+alembic==1.18.5
+    # via -r requirements.in
+amqp==5.3.1
+    # via kombu
+annotated-doc==0.0.4
+    # via fastapi
+annotated-types==0.7.0
+    # via pydantic
+anthropic==0.117.0
+    # via -r requirements.in
+anyio==4.14.2
+    # via
+    #   anthropic
+    #   google-genai
+    #   groq
+    #   httpx
+    #   openai
+    #   starlette
+asyncpg==0.31.0
+    # via -r requirements.in
+bandit==1.9.4
+    # via -r requirements.in
+bcrypt==5.0.0
+    # via -r requirements.in
+billiard==4.2.4
+    # via celery
+celery==5.6.3
+    # via -r requirements.in
+certifi==2026.6.17
+    # via
+    #   httpcore
+    #   httpx
+    #   requests
+cffi==2.1.0
+    # via cryptography
+charset-normalizer==3.4.9
+    # via requests
+click==8.4.2
+    # via
+    #   celery
+    #   click-didyoumean
+    #   click-plugins
+    #   click-repl
+    #   uvicorn
+click-didyoumean==0.3.1
+    # via celery
+click-plugins==1.1.1.2
+    # via celery
+click-repl==0.3.0
+    # via celery
+colorama==0.4.6
+    # via
+    #   bandit
+    #   click
+    #   tqdm
+cryptography==49.0.0
+    # via
+    #   -r requirements.in
+    #   google-auth
+defusedxml==0.7.1
+    # via fpdf2
+distro==1.9.0
+    # via
+    #   anthropic
+    #   google-genai
+    #   groq
+    #   openai
+docstring-parser==0.18.0
+    # via anthropic
+et-xmlfile==2.0.0
+    # via openpyxl
+fastapi==0.139.2
+    # via -r requirements.in
+fonttools==4.63.0
+    # via fpdf2
+fpdf2==2.8.7
+    # via -r requirements.in
+google-auth==2.55.2
+    # via google-genai
+google-genai==2.12.1
+    # via -r requirements.in
+greenlet==3.5.3
+    # via sqlalchemy
+groq==1.5.0
+    # via -r requirements.in
+h11==0.16.0
+    # via
+    #   httpcore
+    #   uvicorn
+httpcore==1.0.9
+    # via httpx
+httpx==0.28.1
+    # via
+    #   -r requirements.in
+    #   anthropic
+    #   google-genai
+    #   groq
+    #   openai
+idna==3.18
+    # via
+    #   anyio
+    #   httpx
+    #   requests
+jiter==0.16.0
+    # via
+    #   anthropic
+    #   openai
+kombu==5.6.2
+    # via celery
+mako==1.3.12
+    # via alembic
+markdown-it-py==4.2.0
+    # via rich
+markupsafe==3.0.3
+    # via mako
+mdurl==0.1.2
+    # via markdown-it-py
+openai==2.46.0
+    # via -r requirements.in
+openpyxl==3.1.5
+    # via -r requirements.in
+opentelemetry-api==1.44.0
+    # via
+    #   -r requirements.in
+    #   opentelemetry-sdk
+    #   opentelemetry-semantic-conventions
+opentelemetry-sdk==1.44.0
+    # via -r requirements.in
+opentelemetry-semantic-conventions==0.65b0
+    # via opentelemetry-sdk
+packaging==26.2
+    # via kombu
+paho-mqtt==2.1.0
+    # via -r requirements.in
+pillow==12.3.0
+    # via fpdf2
+prometheus-client==0.25.0
+    # via -r requirements.in
+prompt-toolkit==3.0.52
+    # via click-repl
+psutil==7.2.2
+    # via -r requirements.in
+psycopg2-binary==2.9.12
+    # via -r requirements.in
+pyasn1==0.6.4
+    # via pyasn1-modules
+pyasn1-modules==0.4.2
+    # via google-auth
+pycparser==3.0
+    # via cffi
+pydantic==2.13.4
+    # via
+    #   -r requirements.in
+    #   anthropic
+    #   fastapi
+    #   google-genai
+    #   groq
+    #   openai
+pydantic-core==2.46.4
+    # via pydantic
+pygments==2.20.0
+    # via rich
+pyjwt==2.13.0
+    # via -r requirements.in
+python-dateutil==2.9.0.post0
+    # via celery
+python-dotenv==1.2.2
+    # via -r requirements.in
+pyyaml==6.0.3
+    # via bandit
+redis==8.0.1
+    # via -r requirements.in
+requests==2.34.2
+    # via
+    #   google-auth
+    #   google-genai
+rich==15.0.0
+    # via
+    #   -r requirements.in
+    #   bandit
+six==1.17.0
+    # via python-dateutil
+sniffio==1.3.1
+    # via
+    #   anthropic
+    #   google-genai
+    #   groq
+    #   openai
+sqlalchemy==2.0.51
+    # via
+    #   -r requirements.in
+    #   alembic
+starlette==1.3.1
+    # via
+    #   -r requirements.in
+    #   fastapi
+stevedore==5.9.0
+    # via bandit
+tenacity==9.1.4
+    # via google-genai
+tqdm==4.69.0
+    # via openai
+typing-extensions==4.16.0
+    # via
+    #   alembic
+    #   anthropic
+    #   fastapi
+    #   google-genai
+    #   groq
+    #   openai
+    #   opentelemetry-api
+    #   opentelemetry-sdk
+    #   opentelemetry-semantic-conventions
+    #   pydantic
+    #   pydantic-core
+    #   sqlalchemy
+    #   typing-inspection
+typing-inspection==0.4.2
+    # via
+    #   fastapi
+    #   pydantic
+tzdata==2026.3
+    # via
+    #   kombu
+    #   tzlocal
+tzlocal==5.4.4
+    # via celery
+urllib3==2.7.0
+    # via requests
+uvicorn==0.51.0
+    # via -r requirements.in
+vine==5.1.0
+    # via
+    #   amqp
+    #   celery
+    #   kombu
+wcwidth==0.8.2
+    # via prompt-toolkit
+websockets==16.1.1
+    # via google-genai
