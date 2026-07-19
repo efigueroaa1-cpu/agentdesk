@@ -90,7 +90,13 @@ class ModbusTelemetryAdapter(BaseTelemetryAdapter):
         if self._cliente is None:
             host, _, puerto = self._host.partition(":")
             self._cliente = ModbusTcpClient(host, port=int(puerto or 502))
-            self._cliente.connect()
+            if self._cliente.connect():
+                logger.info("MODBUS: conexion establecida con %s:%s",
+                            host, puerto or 502)
+            else:
+                logger.warning("MODBUS: no se pudo conectar a %s:%s — "
+                               "verificar que el esclavo este escuchando",
+                               host, puerto or 502)
 
         # Dirección Modbus 4xxxx → offset 0-based del holding register
         offset    = sensor["registro"] - 40001

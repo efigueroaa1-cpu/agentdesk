@@ -13,6 +13,7 @@ el FilterLogHandler recibe eventos de @measure_latency.
 import io
 import json
 import logging
+import os
 import sys
 import threading
 from dataclasses import dataclass, field
@@ -26,6 +27,19 @@ from rich.panel import Panel
 from rich.progress import Progress, TaskProgressColumn, TextColumn
 from rich.table import Table
 from rich import box
+
+
+def _titulo_app() -> str:
+    """
+    Titulo del Header. Si AGENTDESK_MODBUS_HOST esta definida (planta real,
+    p.ej. ModbusPal en 127.0.0.1:5021) anade la etiqueta [MODBUS]; sin la
+    variable el adaptador opera en simulador y el titulo queda limpio.
+    Se evalua en CADA render: refleja el entorno vigente, no el del arranque.
+    """
+    base = "[bold cyan]AgentDesk Professional[/bold cyan]"
+    if os.environ.get("AGENTDESK_MODBUS_HOST", "").strip():
+        return base + r"  [bold green]\[MODBUS][/bold green]"
+    return base
 
 
 def _crear_console() -> Console:
@@ -152,7 +166,7 @@ class AgentDeskLive:
 
         # Header
         target["header"].update(Panel(
-            f"[bold cyan]AgentDesk Professional[/bold cyan]  "
+            f"{_titulo_app()}  "
             f"[dim]|[/dim]  [bold white]{ts}[/bold white]",
             border_style="cyan",
             padding=(0, 2),
@@ -552,7 +566,7 @@ class AgentDeskUI:
     def _render_header(self, target: Layout | None = None) -> None:
         ts = datetime.now().strftime("%Y-%m-%d  %H:%M:%S")
         (target or self._layout)["header"].update(Panel(
-            f"[bold cyan]AgentDesk Professional[/bold cyan]  "
+            f"{_titulo_app()}  "
             f"[dim]|[/dim]  [bold white]{ts}[/bold white]",
             border_style="cyan",
             padding=(0, 2),
