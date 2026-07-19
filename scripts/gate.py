@@ -118,9 +118,13 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # subio 1171->1220 (2026-07-18, ADR-0027): regla [ALERT-DISPATCH]
     # (despacho proactivo de alertas: puerto+despachador existen, sin
     # transporte HTTP en servicios nuevos, suite de notificaciones)
-    "scripts/gate.py":                                                  1220,
+    # subio 1220->1224 (2026-07-19): justificaciones de trinquete de esta
+    # misma tabla (ui/dashboard.py header [MODBUS])
+    "scripts/gate.py":                                                  1224,
     "dashboard.py":                                                     1257,
-    "ui/dashboard.py":                                                  1257,
+    # ui/dashboard subio 1257->1271 (2026-07-19): titulo dinamico del header
+    # (_titulo_app: etiqueta [MODBUS] si AGENTDESK_MODBUS_HOST esta definida)
+    "ui/dashboard.py":                                                  1271,
     # providers.py subio de <500 a 528 (2026-07-16, ADR-0017): generate_con_uso()
     # + extraccion de tokens reales (usage) por cada uno de los 5 proveedores
     # (Gemini/OpenAI/DeepSeek/Anthropic/Groq) para la auditoria FinOps
