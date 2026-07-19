@@ -99,16 +99,53 @@ def respuesta_mock(modelo: str, prompt: str) -> str:
     """
     Respuesta determinista: se deriva por hash SHA-256 del prompt, así el mismo
     prompt produce siempre exactamente el mismo texto (asserts estables).
+
+    Si el prompt pide un reporte JSON (el formato de realizar_tarea), la
+    respuesta cumple ESTRICTAMENTE el schema ReporteAgente: todos los valores
+    como texto, evidencia sin cifras >=1000 (nada que el GroundingGuard pueda
+    marcar como alucinación) y honesta sobre el modo degradado — antes el mock
+    devolvía texto plano, el parseo JSON fallaba 3 veces y todo agente que
+    caía al mock abortaba con 'reporte invalido' (2026-07-19).
     """
     import hashlib
     digest = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
     semilla = int(digest[:8], 16)
     tendencias = ["alza sostenida", "estable", "leve contracción", "recuperación gradual"]
+    tendencia = tendencias[semilla % len(tendencias)]
+
+    if "JSON" in prompt:
+        import json as _json
+        return _json.dumps({
+            "resumen": (
+                "Reporte en MODO DEGRADADO (sin proveedor de IA disponible; "
+                "respuesta determinista local). No se realizó análisis "
+                f"interpretativo de los datos. Tendencia nominal: {tendencia}. "
+                f"Trazabilidad: sha256={digest[:16]}."
+            ),
+            "kpis": {
+                "Modo de Operacion": "degradado (mock, sin red)",
+                "Analisis Interpretativo": "no disponible",
+                "Indice Determinista": f"{semilla % 100}/100",
+            },
+            "tabla": [
+                ["Campo", "Valor"],
+                ["Proveedor", str(modelo)],
+                ["Modo", "degradado sin API"],
+                ["Recomendacion", "reintentar cuando haya proveedor disponible"],
+            ],
+            "evidencia": {
+                "Modo de Operacion": (
+                    "respuesta generada localmente por el MockProvider; "
+                    "no se citan cifras porque no hubo análisis real"
+                ),
+            },
+        }, ensure_ascii=False)
+
     resumen_prompt = " ".join(prompt.split())[:120]
     return (
         f"[MOCK:{modelo}] Análisis determinista (Modo Demo, sin red).\n"
         f"Solicitud: {resumen_prompt}\n"
-        f"Diagnóstico: tendencia con {tendencias[semilla % len(tendencias)]}; "
+        f"Diagnóstico: tendencia con {tendencia}; "
         f"indicador compuesto {semilla % 100}/100.\n"
         f"Recomendación: mantener el plan vigente y revisar en el próximo ciclo.\n"
         f"Trazabilidad: sha256={digest[:16]}"

@@ -67,6 +67,12 @@ class ModbusTelemetryAdapter(BaseTelemetryAdapter):
         super().__init__(intervalo_s=intervalo_s, **kw)
         self._host    = host if host is not None else os.environ.get("AGENTDESK_MODBUS_HOST", "")
         self._cliente = None   # pymodbus AsyncModbusTcpClient (lazy)
+        # Base de direccionamiento confirmada por la primera lectura exitosa:
+        # 40001 (convencion PDU estandar: registro 4xxxx -> offset 0-based) o
+        # 1 (direccion literal 1-based, como define ModbusPal). None = aun
+        # sin confirmar. La ESCRITURA nunca adivina: usa esta base o la
+        # estandar, jamas prueba direcciones alternativas (ADR-0024).
+        self._base_direccion: int | None = None
 
     def protocolo(self) -> str:
         return "modbus" if self._host else "simulador"
@@ -76,18 +82,27 @@ class ModbusTelemetryAdapter(BaseTelemetryAdapter):
             return self._simulador.leer(sensor)
         return self._leer_registro(sensor)
 
+    @staticmethod
+    def _kwargs_unidad(metodo, unit: int) -> dict:
+        """pymodbus >=3.9 renombro slave= a device_id= — detecta por firma."""
+        import inspect
+        try:
+            params = inspect.signature(metodo).parameters
+        except (TypeError, ValueError):
+            return {"device_id": unit}
+        return {"device_id": unit} if "device_id" in params else {"slave": unit}
+
     def _leer_registro(self, sensor: dict) -> float:
         """
         Lectura real de un holding register (fase de conexión a PLC).
         Requiere pymodbus; si falta, degrada al simulador con aviso.
         """
-        try:
-            from pymodbus.client import ModbusTcpClient
-        except ImportError:
-            logger.warning("pymodbus no instalado — sensor '%s' en modo simulador.", sensor["id"])
-            return self._simulador.leer(sensor)
-
         if self._cliente is None:
+            try:
+                from pymodbus.client import ModbusTcpClient
+            except ImportError:
+                logger.warning("pymodbus no instalado — sensor '%s' en modo simulador.", sensor["id"])
+                return self._simulador.leer(sensor)
             host, _, puerto = self._host.partition(":")
             self._cliente = ModbusTcpClient(host, port=int(puerto or 502))
             if self._cliente.connect():
@@ -98,12 +113,36 @@ class ModbusTelemetryAdapter(BaseTelemetryAdapter):
                                "verificar que el esclavo este escuchando",
                                host, puerto or 502)
 
-        # Dirección Modbus 4xxxx → offset 0-based del holding register
-        offset    = sensor["registro"] - 40001
-        respuesta = self._cliente.read_holding_registers(offset, count=1, slave=sensor["unit"])
-        if respuesta.isError():
-            raise ConnectionError(f"Modbus error leyendo {sensor['registro']}: {respuesta}")
-        return round(respuesta.registers[0] * sensor["escala"], 2)
+        crudo = self._leer_crudo(sensor["registro"], sensor["unit"])
+        return round(crudo * sensor["escala"], 2)
+
+    def _leer_crudo(self, registro: int, unit: int) -> int:
+        """
+        Lee el valor crudo probando las 2 convenciones de direccionamiento:
+        PDU estandar (4xxxx -> offset 0-based, base 40001) y direccion
+        literal 1-based (como define ModbusPal, base 1). La primera lectura
+        exitosa CONFIRMA la base para el resto de la sesion.
+        """
+        metodo = self._cliente.read_holding_registers
+        kwargs = self._kwargs_unidad(metodo, unit)
+        if self._base_direccion is not None:
+            bases = [self._base_direccion]
+        else:
+            bases = [40001, 1]
+        ultimo = None
+        for base in bases:
+            respuesta = metodo(registro - base, count=1, **kwargs)
+            if not respuesta.isError():
+                if self._base_direccion is None:
+                    self._base_direccion = base
+                    logger.info(
+                        "MODBUS: convencion de direccionamiento confirmada "
+                        "(base %d: registro %d -> offset %d)",
+                        base, registro, registro - base,
+                    )
+                return respuesta.registers[0]
+            ultimo = respuesta
+        raise ConnectionError(f"Modbus error leyendo {registro}: {ultimo}")
 
     def _escribir_valor(self, actuador: dict, valor: float) -> str:
         """
@@ -126,13 +165,59 @@ class ModbusTelemetryAdapter(BaseTelemetryAdapter):
             self._cliente = ModbusTcpClient(host, port=int(puerto or 502))
             self._cliente.connect()
 
-        offset = actuador["registro"] - 40001
+        # La escritura NUNCA prueba direcciones alternativas (ADR-0024):
+        # usa la base confirmada por lectura, o la estandar 40001.
+        base   = self._base_direccion if self._base_direccion is not None else 40001
+        offset = actuador["registro"] - base
         crudo  = int(round(valor / actuador["escala"]))
-        respuesta = self._cliente.write_register(offset, crudo, slave=actuador["unit"])
+        metodo = self._cliente.write_register
+        respuesta = metodo(offset, crudo,
+                           **self._kwargs_unidad(metodo, actuador["unit"]))
         if respuesta.isError():
             raise ConnectionError(
                 f"Modbus error escribiendo {actuador['registro']}: {respuesta}")
         return f"write_register({actuador['registro']}={crudo})"
+
+    def leer_snapshot(self, bloques: list[dict]) -> dict:
+        """
+        Lectura puntual CONSOLIDADA para pipelines de análisis (Opción
+        Paralelo): NO reemplaza el polling del ciclo (que sigue gobernado
+        por SENSORES) — es una foto bajo demanda de los registros que cada
+        agente de telemetría declara en su bloque `telemetria` de config.
+
+        bloques: [{"unidad": <nombre>, "unit_id": <int>,
+                   "registros": [{"registro", "variable", "escala", "unidad"}]}]
+        Devuelve {unidad: {variable: {"valor", "unidad", "registro"}}};
+        una unidad que falla queda como {unidad: {"error": <motivo>}} y las
+        demás sobreviven — el snapshot jamás lanza.
+        """
+        snapshot: dict = {}
+        for bloque in bloques:
+            unidad = bloque.get("unidad", f"unit_{bloque.get('unit_id')}")
+            lecturas: dict = {}
+            try:
+                for reg in bloque.get("registros", []):
+                    sensor = {
+                        "id":       f"{unidad}:{reg['variable']}",
+                        "registro": reg["registro"],
+                        "unit":     bloque.get("unit_id", 1),
+                        "escala":   reg.get("escala", 1.0),
+                        "unidad":   reg.get("unidad", ""),
+                        # Defaults para el modo simulador (sin host/pymodbus)
+                        "base":     reg.get("base", 50.0),
+                        "amplitud": reg.get("amplitud", 10.0),
+                    }
+                    lecturas[reg["variable"]] = {
+                        "valor":    float(self._leer_valor(sensor)),
+                        "unidad":   sensor["unidad"],
+                        "registro": sensor["registro"],
+                    }
+                snapshot[unidad] = lecturas
+            except Exception as exc:
+                logger.warning("MODBUS: snapshot de '%s' fallo (%s) — se continua "
+                               "con el resto de unidades", unidad, exc)
+                snapshot[unidad] = {"error": str(exc)}
+        return snapshot
 
     async def _reconectar(self) -> None:
         """Cierra el cliente Modbus roto para forzar una conexión nueva (ADR-0012)."""
