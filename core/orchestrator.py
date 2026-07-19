@@ -799,7 +799,8 @@ class AgentBase:
         limpio = limpio[:16_000]
         return await self.realizar_tarea("analisis_externo", _datos_override=limpio)
 
-    async def realizar_tarea(self, tarea: str, _datos_override: str | None = None) -> dict | None:
+    async def realizar_tarea(self, tarea: str,
+                             _datos_override: str | dict | None = None) -> dict | None:
         datos    = _datos_override if _datos_override is not None else consultar_datos_seguros(f"LEER {tarea}")
         es_externo = isinstance(datos, str) and tarea in ("analisis_externo", "custom") or \
                      (isinstance(datos, dict) and datos.get("_es_texto_externo"))
@@ -845,6 +846,16 @@ class AgentBase:
             )
 
         raw_data = datos if isinstance(datos, dict) else {"_corpus": str(datos), "_es_texto_externo": True}
+
+        # Tuberia de datos visible (2026-07-19): contenido EXACTO que recibe
+        # este agente como entrada — permite verificar en sistema.log que la
+        # distribucion de telemetria/datos no llega vacia (colapso Opcion 23).
+        logger.info(
+            "DATOS_ENTRADA agente='%s' tarea='%s' datos=%s",
+            self.nombre, tarea,
+            json.dumps(raw_data, ensure_ascii=False, default=str)[:4000],
+            extra={"agente": self.nombre, "tarea": tarea},
+        )
 
         # ── Bucle de auto-corrección: hasta 3 intentos ────────────────────────
         instruccion_actual = instruccion
@@ -907,6 +918,12 @@ class AgentBase:
                         "tabla (lista con encabezados), evidencia (dict con fuentes)."
                     )
                     continue
+                campos_finales = [str(err.get("loc", "?")) for err in e.errors()]
+                logger.error(
+                    "Agente '%s' — schema inválido tras %d intentos. Campos: %s",
+                    self.nombre, MAX_INTENTOS, campos_finales,
+                    extra={"agente": self.nombre, "error_type": "schema_validation"},
+                )
                 return None
 
             # Ejecutar pipeline con auto-corrección
@@ -1052,6 +1069,57 @@ class Orquestador:
         self.sandbox = SubprocessRunner()
 
         os.makedirs("reportes", exist_ok=True)
+
+    # ── Ejecución paralela controlada (2026-07-19) ────────────────────────────
+
+    async def ejecutar_todos_paralelo(
+        self,
+        tarea: str = "reporte_ventas",
+        datos_override: dict | str | None = None,
+        max_paralelo: int | None = None,
+        timeout_s: float | None = None,
+    ) -> list[dict | None]:
+        """
+        Ejecuta realizar_tarea() en TODOS los agentes con control de flujo:
+
+        - Semáforo de `max_agentes_paralelo` (config.json > orquestador):
+          una ráfaga de 22 peticiones simultáneas dispara RateLimit/latencia
+          en los proveedores, abre los Circuit Breakers y degrada agentes al
+          mock — cuyas cifras inventadas aborta el GroundingGuard. Con el
+          semáforo, las peticiones salen en tandas que los proveedores toleran.
+        - `timeout_tarea_s` por agente (asyncio.wait_for): un agente colgado
+          da None sin arrastrar al resto del lote.
+        - `datos_override`: entrada consolidada (ej. snapshot de telemetría
+          U1-U5) entregada como raw_data a cada agente ANTES de generar.
+
+        Devuelve los resultados en el MISMO orden que self.agentes (orden de
+        config.json), alineado con el zip del dashboard de main.py.
+        """
+        cfg_orq      = self.config.get("orquestador", {}) if isinstance(self.config, dict) else {}
+        max_paralelo = max_paralelo or cfg_orq.get("max_agentes_paralelo", 4)
+        timeout_s    = timeout_s or cfg_orq.get("timeout_tarea_s", 180)
+        semaforo     = asyncio.Semaphore(max_paralelo)
+
+        async def _uno(agente) -> dict | None:
+            async with semaforo:
+                try:
+                    return await asyncio.wait_for(
+                        agente.realizar_tarea(tarea, _datos_override=datos_override),
+                        timeout=timeout_s,
+                    )
+                except asyncio.TimeoutError:
+                    logger.error(
+                        "PARALELO: agente '%s' excedio timeout_tarea_s=%.0fs — descartado",
+                        agente.nombre, timeout_s,
+                        extra={"agente": agente.nombre},
+                    )
+                    return None
+
+        logger.info(
+            "PARALELO: %d agentes, max_paralelo=%d, timeout=%.0fs",
+            len(self.agentes), max_paralelo, timeout_s,
+        )
+        return await asyncio.gather(*[_uno(a) for a in self.agentes.values()])
 
     # ── Recarga dinámica ───────────────────────────────────────────────────────
 

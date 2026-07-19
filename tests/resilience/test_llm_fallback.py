@@ -101,6 +101,164 @@ class TestLlmFallback(unittest.TestCase):
         self.assertEqual(r["proveedor"], "groq")
         self.assertTrue(svc.estado_circuitos()["groq"]["activo"])
 
+    def test_07_reset_forzado_cierra_el_circuito_sin_esperar(self):
+        """resetear_circuito('gemini') cierra el circuito YA: siguiente llamada
+        vuelve a intentar el proveedor sin esperar el enfriamiento (caso real:
+        se corrigió la API key y no queremos esperar 120s)."""
+        gen = _generador_con_fallos(fallan={"groq", "gemini"})
+        svc = LlmService(generador=gen)
+        _run(svc.generar("a")); _run(svc.generar("b"))   # abre groq y gemini
+        self.assertFalse(svc.estado_circuitos()["gemini"]["activo"])
+
+        svc.resetear_circuito("gemini")
+
+        estado = svc.estado_circuitos()["gemini"]
+        self.assertTrue(estado["activo"])
+        self.assertEqual(estado["fallos_consecutivos"], 0)
+        self.assertEqual(estado["ultimo_error"], "")
+        # groq NO fue tocado: su circuito sigue abierto
+        self.assertFalse(svc.estado_circuitos()["groq"]["activo"])
+
+        gen2 = _generador_con_fallos(fallan=set())
+        llamadas_gemini_previas = gen.llamadas.count("gemini")
+
+        async def _gen2_con_uso(model_id, prompt, temperatura=0.4, prioridad=2):
+            texto = await gen2(model_id, prompt, temperatura, prioridad)
+            return {"texto": texto, "tokens_entrada": 1, "tokens_salida": 1,
+                    "tokens_total": 2, "tokens_exactos": False}
+
+        svc._generar_con_uso = _gen2_con_uso              # "la clave nueva funciona"
+        r = _run(svc.generar("c"))
+        self.assertEqual(r["proveedor"], "gemini")
+        self.assertEqual(gen.llamadas.count("gemini"), llamadas_gemini_previas,
+                         "gemini debe reintentarse via el generador nuevo, no el viejo")
+
+    def test_08_reset_sin_proveedor_cierra_todos(self):
+        """resetear_circuito() sin argumento resetea TODOS los circuitos."""
+        gen = _generador_con_fallos(fallan={"groq", "gemini", "openai", "ollama"})
+        svc = LlmService(generador=gen)
+        _run(svc.generar("a")); _run(svc.generar("b"))
+        abiertos = [p for p, e in svc.estado_circuitos().items() if not e["activo"]]
+        self.assertGreaterEqual(len(abiertos), 2)
+
+        reseteados = svc.resetear_circuito()
+
+        self.assertEqual(sorted(reseteados), sorted(abiertos),
+                         "debe informar exactamente los circuitos que estaban abiertos")
+        for p, e in svc.estado_circuitos().items():
+            self.assertTrue(e["activo"], f"{p} debia quedar cerrado tras el reset")
+            self.assertEqual(e["fallos_consecutivos"], 0)
+
+    def test_09_reset_de_proveedor_desconocido_no_rompe(self):
+        """Un proveedor inexistente devuelve lista vacia, jamas lanza."""
+        svc = LlmService(generador=_generador_con_fallos(fallan=set()))
+        self.assertEqual(svc.resetear_circuito("anthropic"), [])
+
+
+class TestMockReporteEstructurado(unittest.TestCase):
+    """Optimizacion de Mock (2026-07-19): cuando el prompt pide un reporte
+    JSON, la respuesta mock debe cumplir ReporteAgente ESTRICTAMENTE y
+    sobrevivir el pipeline completo (incluido GroundingGuard) — antes
+    devolvia texto plano, el parseo JSON fallaba 3 veces y los 15 expertos
+    degradados abortaban al 0% con 'reporte invalido'."""
+
+    PROMPT_JSON = (
+        "Eres un analista. Analiza: {'ventas': 1000}. "
+        "Responde ÚNICAMENTE en JSON válido. "
+        'Estructura: {"resumen": "...", "kpis": {...}, "tabla": [[...]], '
+        '"evidencia": {...}}'
+    )
+
+    def test_12_prompt_json_produce_reporte_valido(self):
+        import json as _json
+        from core.providers import respuesta_mock
+        from core.schemas import ReporteAgente
+        texto = respuesta_mock("mock:agentdesk-demo", self.PROMPT_JSON)
+        reporte = ReporteAgente.model_validate(_json.loads(texto))
+        self.assertTrue(all(isinstance(c, str) for f in reporte.tabla for c in f))
+        self.assertTrue(reporte.kpis and reporte.evidencia)
+
+    def test_13_determinista_y_sin_cifras_que_disparen_grounding(self):
+        from core.providers import respuesta_mock
+        a = respuesta_mock("mock:agentdesk-demo", self.PROMPT_JSON)
+        b = respuesta_mock("mock:agentdesk-demo", self.PROMPT_JSON)
+        self.assertEqual(a, b, "mismo prompt debe dar exactamente el mismo texto")
+        import json as _json, re as _re
+        evidencia = _json.loads(a)["evidencia"]
+        numeros = [float(n) for v in evidencia.values()
+                   for n in _re.findall(r"\d+(?:\.\d+)?", str(v))]
+        self.assertFalse([n for n in numeros if n >= 1000],
+                         "evidencia mock no debe citar cifras >=1000 (GroundingGuard)")
+
+    def test_14_prompt_conversacional_sigue_siendo_texto(self):
+        from core.providers import respuesta_mock
+        texto = respuesta_mock("mock:agentdesk-demo", "Hola, como estas?")
+        self.assertNotIn('"resumen"', texto)
+
+    def test_15_pipeline_completo_sobrevive_con_mock(self):
+        """realizar_tarea + pipeline real (Grounding incluido) con el mock."""
+        from unittest.mock import patch
+        from core.orchestrator import AgentBase
+        from core.providers import respuesta_mock
+
+        agente = AgentBase(
+            {"id": "t_mock", "nombre": "Experto Degradado", "tipo_ia": "analitico",
+             "area": "Test", "modelo": "mock:agentdesk-demo", "temperatura": 0.0,
+             "idioma": "espanol", "prompt_base": "Eres un analista.",
+             "siguiente_agente_id": None},
+            None, "models/gemini-2.5-flash")
+
+        async def _generar(prompt, temperatura=0.4, prioridad=2, modelo_preferido=None):
+            texto = respuesta_mock("mock:agentdesk-demo", prompt)
+            return {"texto": texto, "proveedor": "mock", "modelo": "mock:agentdesk-demo",
+                    "intentos": ["mock:ok"], "degradado": True, "tokens_entrada": 1,
+                    "tokens_salida": 1, "tokens_total": 2, "tokens_exactos": False}
+
+        with patch("core.services.llm_service.llm_service.generar", side_effect=_generar):
+            resultado = asyncio.run(
+                agente.realizar_tarea("reporte_ventas",
+                                      _datos_override={"ventas": {"mayo": 75000}}))
+        self.assertIsNotNone(resultado, "el reporte mock debe sobrevivir el pipeline")
+
+
+class TestEndpointResetCircuitos(unittest.TestCase):
+    """POST /diagnostico/llm/reset: RBAC supervisor+ y reset real del singleton."""
+
+    @classmethod
+    def setUpClass(cls):
+        from fastapi.testclient import TestClient
+        from core.api import app
+        # Sin `with`: no disparar lifespan/startup (patron test_security)
+        cls.client = TestClient(app, raise_server_exceptions=False)
+
+    @staticmethod
+    def _token(rol):
+        from core.auth import crear_token
+        return crear_token(f"test_reset_{rol}", rol)["token"]
+
+    def test_10_endpoint_reset_exige_supervisor(self):
+        r = self.client.post("/diagnostico/llm/reset", json={})
+        self.assertEqual(r.status_code, 403)
+        r = self.client.post(
+            "/diagnostico/llm/reset", json={},
+            headers={"Authorization": f"Bearer {self._token('viewer')}"},
+        )
+        self.assertEqual(r.status_code, 403)
+
+    def test_11_endpoint_reset_cierra_circuito_del_singleton(self):
+        from core.services.llm_service import llm_service
+        llm_service.registrar_fallo("gemini", "clave vieja")
+        llm_service.registrar_fallo("gemini", "clave vieja")
+        self.assertFalse(llm_service.estado_circuitos()["gemini"]["activo"])
+
+        r = self.client.post(
+            "/diagnostico/llm/reset", json={"proveedor": "gemini"},
+            headers={"Authorization": f"Bearer {self._token('supervisor')}"},
+        )
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["reseteados"], ["gemini"])
+        self.assertTrue(llm_service.estado_circuitos()["gemini"]["activo"])
+
 
 if __name__ == "__main__":
     unittest.main()

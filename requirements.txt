@@ -162,6 +162,8 @@ pygments==2.20.0
     # via rich
 pyjwt==2.13.0
     # via -r requirements.in
+pymodbus==3.14.0
+    # via -r requirements.in
 python-dateutil==2.9.0.post0
     # via celery
 python-dotenv==1.2.2

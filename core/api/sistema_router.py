@@ -19,8 +19,8 @@ from core import kill_switch
 import core.api._state as _state
 from core.api.schemas import (CopilotoAplicarRequest, CopilotoPlanRequest,
                               KillSwitchLicenciaRequest, KillSwitchToggleRequest,
-                              MapReduceRequest, SkillExtraerRequest,
-                              UpdateURLRequest)
+                              LlmResetRequest, MapReduceRequest,
+                              SkillExtraerRequest, UpdateURLRequest)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -106,6 +106,27 @@ async def diagnostico_llm() -> dict:
     from core.services.llm_service import llm_service
     return {"circuitos": llm_service.estado_circuitos(),
             "cadena": [p for p, _ in llm_service._cadena]}
+
+
+@router.post("/diagnostico/llm/reset")
+async def diagnostico_llm_reset(payload: LlmResetRequest, req: Request) -> dict:
+    """
+    Reset forzado de Circuit Breakers (operacional): cierra el circuito de
+    un proveedor (o de todos) SIN esperar el enfriamiento de 120s — caso
+    real: se corrigió la API key y no tiene sentido seguir saltándolo.
+    Requiere rol supervisor o admin (misma vara que /auditoria/*); queda
+    registrado en el log con usuario y circuitos afectados.
+    """
+    from core.auth import tiene_permiso
+    if not tiene_permiso(getattr(req.state, "rol", "viewer"), "supervisor"):
+        raise HTTPException(403, detail="Se requiere rol supervisor o admin.")
+    from core.services.llm_service import llm_service
+    reseteados = llm_service.resetear_circuito(payload.proveedor)
+    logger.warning("AUDITORIA_SEGURIDAD: reset de circuitos LLM %s por user=%s",
+                   reseteados or "(ninguno abierto)",
+                   getattr(req.state, "user_id", "anonimo"))
+    return {"ok": True, "reseteados": reseteados,
+            "circuitos": llm_service.estado_circuitos()}
 
 
 @router.get("/diagnostico/recursos")
