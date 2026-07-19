@@ -111,6 +111,11 @@ class PresupuestoPayload(BaseModel):
     periodos:    int = 6
 
 
+class LlmResetRequest(BaseModel):
+    """Payload para POST /diagnostico/llm/reset. Sin proveedor = todos."""
+    proveedor: str | None = None
+
+
 class MapReduceRequest(BaseModel):
     """Payload para POST /orquestador/mapreduce (Fase 21, ADR-0019)."""
     lider_id:         str

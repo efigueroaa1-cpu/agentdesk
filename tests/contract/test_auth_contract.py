@@ -73,6 +73,10 @@ RUTAS_PUBLICAS_AUTORIZADAS: frozenset[tuple[str, str]] = frozenset({
     ("POST", "/copiloto/planificar"),
     ("POST", "/copiloto/aplicar"),
     ("PUT",  "/update/url"),
+    # Reset forzado de Circuit Breakers LLM: RBAC supervisor+ dentro del
+    # handler + log AUDITORIA_SEGURIDAD; solo cierra circuitos (no toca
+    # claves ni datos) — operacion de recuperacion tras corregir una API key.
+    ("POST", "/diagnostico/llm/reset"),
     # Map-Reduce (Fase 21, ADR-0019): RBAC supervisor+ dentro del handler
     # (dispara N llamadas reales a LLM, mismo criterio que /auditoria/*)
     ("POST", "/orquestador/mapreduce"),

@@ -190,6 +190,33 @@ class LlmService:
         resto = [(p, m) for p, m in self._cadena if p != proveedor_pref]
         return [(proveedor_pref, modelo_preferido)] + resto
 
+    def resetear_circuito(self, proveedor: str | None = None) -> list[str]:
+        """
+        Reset forzado (operacional) de Circuit Breakers: cierra el circuito
+        YA, sin esperar el enfriamiento de 120s. Caso real: se corrigió la
+        API key de un proveedor y no tiene sentido seguir saltándolo.
+
+        Con `proveedor` resetea solo ese circuito; sin argumento, todos.
+        Devuelve la lista de proveedores cuyo circuito estaba ABIERTO y
+        quedó cerrado (para el log de auditoría del endpoint). Un proveedor
+        desconocido devuelve lista vacía, jamás lanza.
+        """
+        objetivo = (
+            [proveedor] if proveedor is not None else list(self._circuitos)
+        )
+        reseteados: list[str] = []
+        for p in objetivo:
+            cb = self._circuitos.get(p)
+            if cb is None:
+                continue
+            if not cb.disponible():
+                reseteados.append(p)
+            cb.registrar_exito()
+            self._ultimo_error.pop(p, None)
+        if reseteados:
+            logger.warning("CIRCUIT_BREAKER: reset forzado de %s", reseteados)
+        return reseteados
+
     def estado_circuitos(self) -> dict:
         """Diagnóstico para el Módulo Diagnóstico: estado OPEN/CLOSED,
         fallos, latencias recientes y último error por proveedor."""

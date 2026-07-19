@@ -73,7 +73,13 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # de core.providers.generate directo); gate de circuit breaker antes
     # del loop de tool-calling nativo en chat_con_herramientas; canales
     # laterales ultimo_proveedor_llm/ultimo_tokens_llm
-    "core/orchestrator.py":                                             1325,
+    # subio 1325->1387 (2026-07-19): ejecutar_todos_paralelo (semaforo
+    # max_agentes_paralelo + timeout_tarea_s por agente — antes metadata
+    # inerte del config; la rafaga de 22 abria breakers y degradaba a mock)
+    # + log DATOS_ENTRADA (tuberia de datos visible en sistema.log)
+    # subio 1387->1393 (2026-07-19): ERROR final de schema invalido con
+    # los campos que fallaron (antes: None silencioso, indiagnosticable)
+    "core/orchestrator.py":                                             1393,
     # tools.py subio 1120->1153 (2026-07-14): evaluador AST que reemplaza eval()
     # subio 1153->1209 (2026-07-15, ADR-0011): tool consultar_a_otro_agente
     # + set_orquestador() (delegacion cognitiva Speak/Listen)
@@ -120,7 +126,11 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # transporte HTTP en servicios nuevos, suite de notificaciones)
     # subio 1220->1224 (2026-07-19): justificaciones de trinquete de esta
     # misma tabla (ui/dashboard.py header [MODBUS])
-    "scripts/gate.py":                                                  1224,
+    # subio 1224->1230 (2026-07-19): justificacion del trinquete de
+    # orchestrator.py (ejecutar_todos_paralelo) + esta misma entrada
+    # subio 1230->1234 (2026-07-19): idem, log final de schema invalido
+    # subio 1234->1239 (2026-07-19): idem, respuesta_mock estructurada
+    "scripts/gate.py":                                                  1239,
     "dashboard.py":                                                     1257,
     # ui/dashboard subio 1257->1271 (2026-07-19): titulo dinamico del header
     # (_titulo_app: etiqueta [MODBUS] si AGENTDESK_MODBUS_HOST esta definida)
@@ -130,7 +140,10 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # (Gemini/OpenAI/DeepSeek/Anthropic/Groq) para la auditoria FinOps
     # subio 528->604 (2026-07-16, ADR-0018): adaptador Ollama/LM Studio
     # (_ollama/_ollama_stream, OpenAI-compatible local) para soberania de datos
-    "core/providers.py":                                                 604,
+    # subio 604->641 (2026-07-19): respuesta_mock estructurada — rama JSON
+    # que cumple ReporteAgente (antes texto plano: todo agente degradado a
+    # mock abortaba con 'reporte invalido' al fallar el parseo 3 veces)
+    "core/providers.py":                                                 641,
 }
 
 # Reglas de capas (ADR-0002/0004): prefijo de carpeta -> imports prohibidos.

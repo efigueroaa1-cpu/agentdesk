@@ -209,10 +209,32 @@ async def main() -> None:
                         inicio = loop.time()
                         ui.iniciar_agentes(nombres)
 
-                        resultados = await asyncio.gather(
-                            *[app.agentes[a['id']].realizar_tarea("reporte_ventas")
-                              for a in agentes_cfg],
-                            return_exceptions=False,
+                        # Sincronizacion de telemetria (2026-07-19): snapshot
+                        # consolidado de las unidades Modbus (bloques
+                        # `telemetria` de config.json) entregado como raw_data
+                        # a TODOS los agentes ANTES de generar — sin esto los
+                        # expertos analizaban datos_trabajo.json vacio y el
+                        # GroundingGuard abortaba las cifras inventadas.
+                        # Composicion aqui, no en core (ADR-0004).
+                        datos_paralelo = None
+                        bloques_tel = [
+                            {"unidad": a["nombre"],
+                             "unit_id": a["telemetria"].get("unit_id", 1),
+                             "registros": a["telemetria"].get("registros", [])}
+                            for a in agentes_cfg
+                            if a.get("telemetria", {}).get("protocolo") == "modbus_tcp"
+                        ]
+                        if bloques_tel:
+                            from core.adapters.modbus_adapter import ModbusTelemetryAdapter
+                            snapshot = ModbusTelemetryAdapter().leer_snapshot(bloques_tel)
+                            datos_paralelo = {"telemetria_industrial": snapshot}
+                            log.info(
+                                "Telemetria consolidada para el lote paralelo",
+                                extra={"unidades": len(snapshot)},
+                            )
+
+                        resultados = await app.ejecutar_todos_paralelo(
+                            "reporte_ventas", datos_override=datos_paralelo,
                         )
                         for cfg_ag, res in zip(agentes_cfg, resultados):
                             ui.marcar_completado(cfg_ag['nombre'], ok=(res is not None))

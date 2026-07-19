@@ -50,5 +50,5 @@ paho-mqtt>=2.0             # broker MQTT real (AGENTDESK_MQTT_BROKER)
 psutil>=5.9                # Circuit Breaker de Concurrencia (ADR-0019) + sandbox
 
 # â”€â”€ Opcionales de planta (ADR-0004) â€” descomenta segÃºn despliegue â”€â”€â”€â”€â”€â”€â”€â”€â”€
-# pymodbus>=3.6            # PLC Modbus TCP (AGENTDESK_MODBUS_HOST)
+pymodbus>=3.9              # PLC Modbus TCP (AGENTDESK_MODBUS_HOST) - v1.0-industrial: telemetria U1-U5 es capacidad central; >=3.9 por device_id=
 # asyncua>=1.1             # servidor OPC-UA (AGENTDESK_OPCUA_ENDPOINT)
