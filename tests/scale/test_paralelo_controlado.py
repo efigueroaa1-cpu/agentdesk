@@ -14,7 +14,7 @@ Correr:  python -m unittest tests.scale.test_paralelo_controlado -v
 import asyncio
 import json
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from core.orchestrator import AgentBase, Orquestador
 
@@ -91,6 +91,84 @@ class TestParaleloControlado(unittest.TestCase):
         orq.config = {"agents": []}
         resultados = asyncio.run(orq.ejecutar_todos_paralelo("reporte_ventas"))
         self.assertEqual(len(resultados), 1)
+
+
+class _AgenteFakeConProveedor:
+    """Doble de AgentBase: simula que llm_service degrado (o no) fuera de Groq.
+
+    modelo=preferido del agente (config.json); proveedor_real=lo que
+    realmente respondio (canal lateral ultimo_proveedor_llm, ADR-0019).
+    """
+
+    def __init__(self, nombre, modelo, proveedor_real):
+        self.nombre = nombre
+        self.modelo = modelo
+        self.ultimo_proveedor_llm = ""
+        self._proveedor_real = proveedor_real
+
+    async def realizar_tarea(self, tarea, _datos_override=None):
+        self.ultimo_proveedor_llm = self._proveedor_real
+        return {"resumen": f"ok-{self.nombre}"}
+
+
+class TestJitterSaturacionGroq(unittest.TestCase):
+    """429 persistente en Groq -> espaciar la rafaga con jitter (2026-07-20)."""
+
+    def test_07_dos_degradaciones_seguidas_activan_jitter_antes_del_3ro(self):
+        agentes = {
+            "a1": _AgenteFakeConProveedor("A1", "groq:llama-3.3-70b-versatile", "mock"),
+            "a2": _AgenteFakeConProveedor("A2", "groq:llama-3.3-70b-versatile", "mock"),
+            "a3": _AgenteFakeConProveedor("A3", "groq:llama-3.3-70b-versatile", "mock"),
+        }
+        orq = _orquestador_con(agentes, {"max_agentes_paralelo": 1, "timeout_tarea_s": 5})
+
+        with patch("core.orchestrator.asyncio.sleep", new_callable=AsyncMock) as m_sleep:
+            asyncio.run(orq.ejecutar_todos_paralelo("reporte_ventas"))
+
+        esperas = [c.args[0] for c in m_sleep.call_args_list]
+        self.assertTrue(esperas, "no se aplico jitter tras 2 degradaciones seguidas de Groq")
+        self.assertGreaterEqual(esperas[0], 1.5, "el jitter debe ser >= 1.5s")
+
+    def test_08_exito_real_en_groq_resetea_el_contador(self):
+        agentes = {
+            "a1": _AgenteFakeConProveedor("A1", "groq:llama-3.3-70b-versatile", "mock"),
+            "a2": _AgenteFakeConProveedor("A2", "groq:llama-3.3-70b-versatile", "mock"),
+            "a3": _AgenteFakeConProveedor("A3", "groq:llama-3.3-70b-versatile", "groq"),
+            "a4": _AgenteFakeConProveedor("A4", "groq:llama-3.3-70b-versatile", "mock"),
+        }
+        orq = _orquestador_con(agentes, {"max_agentes_paralelo": 1, "timeout_tarea_s": 5})
+
+        with patch("core.orchestrator.asyncio.sleep", new_callable=AsyncMock) as m_sleep:
+            asyncio.run(orq.ejecutar_todos_paralelo("reporte_ventas"))
+
+        # a1+a2 degradan (jitter antes de a3); a3 responde con Groq real ->
+        # resetea; a4 degrada solo (1, bajo el umbral) -> sin jitter nuevo.
+        self.assertEqual(len(m_sleep.call_args_list), 1)
+
+    def test_09_agentes_no_groq_nunca_activan_jitter(self):
+        agentes = {
+            "a1": _AgenteFakeConProveedor("A1", "gemini:models/gemini-2.5-flash", "mock"),
+            "a2": _AgenteFakeConProveedor("A2", "gemini:models/gemini-2.5-flash", "mock"),
+            "a3": _AgenteFakeConProveedor("A3", "gemini:models/gemini-2.5-flash", "mock"),
+        }
+        orq = _orquestador_con(agentes, {"max_agentes_paralelo": 1, "timeout_tarea_s": 5})
+
+        with patch("core.orchestrator.asyncio.sleep", new_callable=AsyncMock) as m_sleep:
+            asyncio.run(orq.ejecutar_todos_paralelo("reporte_ventas"))
+
+        m_sleep.assert_not_called()
+
+    def test_10_una_sola_degradacion_no_alcanza_el_umbral(self):
+        agentes = {
+            "a1": _AgenteFakeConProveedor("A1", "groq:llama-3.3-70b-versatile", "mock"),
+            "a2": _AgenteFakeConProveedor("A2", "groq:llama-3.3-70b-versatile", "groq"),
+        }
+        orq = _orquestador_con(agentes, {"max_agentes_paralelo": 1, "timeout_tarea_s": 5})
+
+        with patch("core.orchestrator.asyncio.sleep", new_callable=AsyncMock) as m_sleep:
+            asyncio.run(orq.ejecutar_todos_paralelo("reporte_ventas"))
+
+        m_sleep.assert_not_called()
 
 
 class TestDistribucionDatos(unittest.TestCase):

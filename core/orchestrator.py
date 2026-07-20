@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import random
 from google import genai
 
 from pydantic import ValidationError
@@ -1091,6 +1092,15 @@ class Orquestador:
           da None sin arrastrar al resto del lote.
         - `datos_override`: entrada consolidada (ej. snapshot de telemetría
           U1-U5) entregada como raw_data a cada agente ANTES de generar.
+        - Jitter por saturacion persistente de Groq (2026-07-20): incluso con
+          el semaforo, una racha de agentes que preferian Groq y terminan
+          degradados (ultimo_proveedor_llm != "groq", canal lateral ADR-0019)
+          indica que Groq esta devolviendo 429 en cascada. Tras
+          UMBRAL_429_PERSISTENTE degradaciones SEGUIDAS, se espera un jitter
+          extra antes de la siguiente llamada — separado del backoff propio
+          de la cadena de fallback (ADR-0017), que ya reintenta por llamada
+          individual pero no espacia la rafaga completa. Un exito real en
+          Groq resetea el contador.
 
         Devuelve los resultados en el MISMO orden que self.agentes (orden de
         config.json), alineado con el zip del dashboard de main.py.
@@ -1100,10 +1110,23 @@ class Orquestador:
         timeout_s    = timeout_s or cfg_orq.get("timeout_tarea_s", 180)
         semaforo     = asyncio.Semaphore(max_paralelo)
 
+        UMBRAL_429_PERSISTENTE = 2
+        JITTER_BASE_S          = 1.5
+        _saturacion_groq       = {"consecutivos": 0}
+
         async def _uno(agente) -> dict | None:
             async with semaforo:
+                if _saturacion_groq["consecutivos"] >= UMBRAL_429_PERSISTENTE:
+                    espera = JITTER_BASE_S + random.uniform(0, 0.5)
+                    logger.warning(
+                        "PARALELO: 429 persistente en Groq (%d degradaciones seguidas) "
+                        "— espaciando %.2fs antes de '%s'",
+                        _saturacion_groq["consecutivos"], espera, agente.nombre,
+                        extra={"agente": agente.nombre},
+                    )
+                    await asyncio.sleep(espera)
                 try:
-                    return await asyncio.wait_for(
+                    resultado = await asyncio.wait_for(
                         agente.realizar_tarea(tarea, _datos_override=datos_override),
                         timeout=timeout_s,
                     )
@@ -1114,6 +1137,15 @@ class Orquestador:
                         extra={"agente": agente.nombre},
                     )
                     return None
+
+                modelo_preferido = getattr(agente, "modelo", "") or ""
+                proveedor_real   = getattr(agente, "ultimo_proveedor_llm", "") or ""
+                if modelo_preferido.startswith("groq:") and proveedor_real and proveedor_real != "groq":
+                    _saturacion_groq["consecutivos"] += 1
+                else:
+                    _saturacion_groq["consecutivos"] = 0
+
+                return resultado
 
         logger.info(
             "PARALELO: %d agentes, max_paralelo=%d, timeout=%.0fs",
