@@ -86,7 +86,12 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # subio 1425->1447 (2026-07-20): agentes_prioritarios -- con cuota diaria
     # casi agotada, despachar primero a los agentes criticos (config.json >
     # orquestador) en vez de delays ciegos que no liberan cuota TPD
-    "core/orchestrator.py":                                             1447,
+    # subio 1447->1460 (2026-07-20): _contexto_harnesses() cableado en
+    # realizar_tarea() -- antes solo se invocaba desde chat_libre/con_
+    # herramientas; el lote batch de la Opcion Paralelo nunca consultaba
+    # memoria semantica (Hermes) pese a que config.json ya podia declarar
+    # "harnesses": ["memoria"] por agente
+    "core/orchestrator.py":                                             1460,
     # tools.py subio 1120->1153 (2026-07-14): evaluador AST que reemplaza eval()
     # subio 1153->1209 (2026-07-15, ADR-0011): tool consultar_a_otro_agente
     # + set_orquestador() (delegacion cognitiva Speak/Listen)
@@ -142,7 +147,9 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # propio comentario suma sus lineas al conteo (trampa recurrente)
     # subio 1244->1250 (2026-07-20): justificacion del trinquete de
     # orchestrator.py (agentes_prioritarios)
-    "scripts/gate.py":                                                  1249,
+    # subio 1249->1256 (2026-07-20): justificacion del trinquete de
+    # orchestrator.py (HATs cableados en realizar_tarea)
+    "scripts/gate.py":                                                  1256,
     "dashboard.py":                                                     1257,
     # ui/dashboard subio 1257->1271 (2026-07-19): titulo dinamico del header
     # (_titulo_app: etiqueta [MODBUS] si AGENTDESK_MODBUS_HOST esta definida)
