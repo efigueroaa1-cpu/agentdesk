@@ -238,6 +238,58 @@ class TestReintentoInteligentePorVentanaDeCuota(unittest.TestCase):
         m_sleep.assert_not_called()
 
 
+def _generador_con_demora(demoras: dict[str, float]):
+    """Doble: cada proveedor listado duerme la cantidad indicada de segundos
+    antes de responder OK; el resto responde de inmediato."""
+    async def generar(model_id, prompt, temperatura=0.4, prioridad=2):
+        proveedor = model_id.split(":", 1)[0]
+        if proveedor in demoras:
+            await asyncio.sleep(demoras[proveedor])
+        return f"respuesta-de-{proveedor}"
+    return generar
+
+
+class TestLatenciaPorProveedorOllama(unittest.TestCase):
+    """Ollama corre en hardware local sin costo/cuota externa -- el limite
+    de latencia global (pensado para cortar proveedores CLOUD colgados) era
+    demasiado estricto para inferencia local bajo carga concurrente real
+    (2026-07-20: 3 agentes ICI concurrentes excedieron 30s y abrieron el
+    circuito de Ollama, cayendo los 22 agentes a Mock pese a que Ollama
+    respondia)."""
+
+    _CADENA_CORTA = [("groq", "groq:llama-3.3-70b-versatile"),
+                     ("ollama", "ollama:llama3.2"),
+                     ("mock", "mock:agentdesk-demo")]
+
+    def test_20_ollama_tolera_mas_latencia_que_el_limite_global(self):
+        gen = _generador_con_demora({"groq": 10, "ollama": 0.3})
+        svc = LlmService(generador=gen, cadena=self._CADENA_CORTA,
+                         latencia_max_s=0.1, latencia_por_proveedor={"ollama": 0.5})
+        r = _run(svc.generar("informe"))
+        self.assertEqual(r["proveedor"], "ollama",
+                         "0.3s debe caber en el presupuesto especifico de ollama (0.5s)")
+
+    def test_21_sin_override_ollama_usa_el_mismo_limite_global_que_los_demas(self):
+        gen = _generador_con_demora({"groq": 10, "ollama": 0.3})
+        svc = LlmService(generador=gen, cadena=self._CADENA_CORTA,
+                         latencia_max_s=0.1, latencia_por_proveedor={})
+        r = _run(svc.generar("informe"))
+        self.assertEqual(r["proveedor"], "mock",
+                         "sin override, 0.3s excede el limite global de 0.1s -- cae a mock")
+
+    def test_22_override_de_ollama_no_afecta_a_otros_proveedores(self):
+        gen = _generador_con_demora({"groq": 0.3})
+        svc = LlmService(generador=gen, latencia_max_s=0.1,
+                         latencia_por_proveedor={"ollama": 5.0})
+        r = _run(svc.generar("informe"))
+        self.assertNotEqual(r["proveedor"], "groq",
+                            "groq no tiene override -- sigue respetando el limite global")
+
+    def test_23_default_de_produccion_es_60s_para_ollama(self):
+        from core.services.llm_service import LATENCIA_MAX_POR_PROVEEDOR
+        self.assertEqual(LATENCIA_MAX_POR_PROVEEDOR.get("ollama"), 60.0)
+
+
 class TestMockReporteEstructurado(unittest.TestCase):
     """Optimizacion de Mock (2026-07-19): cuando el prompt pide un reporte
     JSON, la respuesta mock debe cumplir ReporteAgente ESTRICTAMENTE y
