@@ -157,5 +157,67 @@ class TestHerramientaConsultarAOtroAgente(unittest.IsolatedAsyncioTestCase):
             tools.set_orquestador(original)
 
 
+class TestDelegacionEntreAgentesReales(unittest.IsolatedAsyncioTestCase):
+    """Validacion con los agentes REALES de config.json (2026-07-20), no
+    dobles sinteticos: Contador ICI pide a Estratega Corporativo un informe
+    de riesgos, via la MISMA herramienta que invocaria un LLM real
+    (ejecutar_herramienta -> consultar_a_otro_agente). AGENTDESK_MODE=mock
+    mantiene esto determinista y sin costo -- no se fabrica una decision de
+    LLM (eso ya esta documentado como no demostrable sin proveedor real y
+    tool-calling, ADR-0011), pero SI se prueba que el mecanismo funciona
+    end-to-end con la configuracion de produccion real, no con fixtures."""
+
+    @classmethod
+    def setUpClass(cls):
+        db.init_db(db_path=Path(tempfile.mkdtemp()) / "delegacion_real_test.db")
+
+        from core.config_loader import load_config
+        from core.orchestrator import AgentBase
+
+        cfg = load_config()
+        por_id = {a["id"]: a for a in cfg["agents"]}
+        assert "agente_contabilidad_01" in por_id and "agente_estrategia_01" in por_id, (
+            "config.json debe seguir teniendo estos dos agentes -- si cambiaron "
+            "de id, actualizar este test")
+
+        cls.contador   = AgentBase(dict(por_id["agente_contabilidad_01"]),
+                                   None, "mock:agentdesk-demo")
+        cls.estratega  = AgentBase(dict(por_id["agente_estrategia_01"]),
+                                   None, "mock:agentdesk-demo")
+        cls.orq = _OrqFake({"agente_contabilidad_01": cls.contador,
+                            "agente_estrategia_01": cls.estratega})
+
+    async def test_06_contador_pide_informe_de_riesgos_al_estratega(self):
+        import core.tools as tools
+        original = tools._orquestador_ref
+        tools.set_orquestador(self.orq)
+        try:
+            resultado = await tools.ejecutar_herramienta(
+                "consultar_a_otro_agente",
+                {"agente_id": "agente_estrategia_01",
+                 "pregunta": "Necesito un informe de riesgos del proyecto actual "
+                             "para incorporarlo a mi analisis contable."},
+                agente_id_clave="agente_contabilidad_01", user_id="operador_local",
+            )
+        finally:
+            tools.set_orquestador(original)
+
+        self.assertTrue(resultado, "el Estratega debe devolver una respuesta real")
+
+        # DelegationService._auditar() usa el id de config.json (a diferencia
+        # de _contexto_harnesses(), que usa self.nombre) -- distinto criterio
+        # de particion en cada capa, ambos consistentes dentro de si mismos.
+        trazas_contador   = audit_service.consultar(agente_id="agente_contabilidad_01",
+                                                     user_id="operador_local", limit=10)
+        trazas_estratega  = audit_service.consultar(agente_id="agente_estrategia_01",
+                                                     user_id="operador_local", limit=10)
+        deleg_contador  = [t for t in trazas_contador if t.get("tipo") == "delegacion"]
+        deleg_estratega = [t for t in trazas_estratega if t.get("tipo") == "delegacion"]
+
+        self.assertTrue(deleg_contador, "falta la traza del lado que DELEGO (Contador)")
+        self.assertTrue(deleg_estratega, "falta la traza del lado que RESOLVIO (Estratega)")
+        self.assertEqual(deleg_contador[0]["contexto"], "delegado")
+        self.assertEqual(deleg_estratega[0]["contexto"], "resuelto")
+
 if __name__ == "__main__":
     unittest.main()
