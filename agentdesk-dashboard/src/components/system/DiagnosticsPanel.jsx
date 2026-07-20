@@ -14,11 +14,12 @@ function authHeaders() {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-function ProviderCard({ nombre, info }) {
+function ProviderCard({ nombre, info, onReset, reseteando }) {
   const abierto = info.estado === "OPEN";
   const cls = abierto
     ? "border-neon-red/40 bg-neon-red/[.05]"
     : "border-neon-green/40 bg-neon-green/[.05]";
+  const esCuota = /429|quota|rate.?limit/i.test(info.ultimo_error || "");
   return (
     <div className={`rounded-xl border-2 px-4 py-3.5 ${cls}`}>
       <div className="flex items-center justify-between">
@@ -63,6 +64,25 @@ function ProviderCard({ nombre, info }) {
           ⚠ {info.ultimo_error}
         </div>
       )}
+      {abierto && (
+        <>
+          <button
+            onClick={() => onReset(nombre)}
+            disabled={reseteando}
+            className="mt-2.5 w-full rounded-lg border border-neon-red/40 bg-neon-red/10 px-2 py-1.5 text-[.7rem] font-bold text-neon-red transition hover:bg-neon-red/20 disabled:opacity-50"
+          >
+            {reseteando ? "Reseteando…" : "↻ Resetear circuito"}
+          </button>
+          {esCuota && (
+            <p className="mt-1.5 text-[.65rem] leading-snug text-[var(--t-text-muted)]">
+              El último error parece ser cuota agotada del proveedor (429).
+              Resetear cierra el circuito antes de tiempo, pero si la cuota
+              sigue agotada la próxima llamada real fallará de nuevo — esto no
+              restaura cuota.
+            </p>
+          )}
+        </>
+      )}
     </div>
   );
 }
@@ -71,6 +91,7 @@ export default function DiagnosticsPanel() {
   const [circuitos, setCircuitos] = useState({});
   const [cadena, setCadena] = useState([]);
   const [trazas, setTrazas] = useState(null); // null = sin permiso/cargando
+  const [reseteando, setReseteando] = useState(null); // nombre del proveedor en curso, o null
 
   const cargar = useCallback(async () => {
     try {
@@ -98,6 +119,23 @@ export default function DiagnosticsPanel() {
     return () => clearInterval(t);
   }, [cargar]);
 
+  const resetearCircuito = useCallback(async (proveedor) => {
+    setReseteando(proveedor);
+    try {
+      const r = await fetch(`${API_BASE}/diagnostico/llm/reset`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ proveedor }),
+      });
+      if (r.ok) {
+        const data = await r.json();
+        setCircuitos(data.circuitos || {});
+      }
+    } finally {
+      setReseteando(null);
+    }
+  }, []);
+
   return (
     <div className="flex flex-col gap-5">
       <div>
@@ -110,7 +148,13 @@ export default function DiagnosticsPanel() {
         </p>
         <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-3">
           {cadena.map((p) => (
-            <ProviderCard key={p} nombre={p} info={circuitos[p] || {}} />
+            <ProviderCard
+              key={p}
+              nombre={p}
+              info={circuitos[p] || {}}
+              onReset={resetearCircuito}
+              reseteando={reseteando === p}
+            />
           ))}
         </div>
       </div>
