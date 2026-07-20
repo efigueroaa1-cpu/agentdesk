@@ -9,6 +9,7 @@ Correr:  python -m unittest tests.resilience.test_llm_fallback -v
 """
 import asyncio
 import unittest
+from unittest.mock import AsyncMock, patch
 
 from core.services.llm_service import LlmService
 
@@ -153,6 +154,88 @@ class TestLlmFallback(unittest.TestCase):
         """Un proveedor inexistente devuelve lista vacia, jamas lanza."""
         svc = LlmService(generador=_generador_con_fallos(fallan=set()))
         self.assertEqual(svc.resetear_circuito("anthropic"), [])
+
+
+def _generador_con_error(mensajes: dict[str, list[str]]):
+    """Doble: por cada proveedor, una lista de mensajes de error a lanzar en
+    orden (uno por llamada); agotada la lista, responde ok. Permite simular
+    "falla N veces con este 429 especifico y despues sana" para probar el
+    reintento inteligente por ventana de cuota."""
+    restantes = {p: list(m) for p, m in mensajes.items()}
+    llamadas: list[str] = []
+
+    async def generar(model_id, prompt, temperatura=0.4, prioridad=2):
+        proveedor = model_id.split(":", 1)[0]
+        llamadas.append(proveedor)
+        cola = restantes.get(proveedor, [])
+        if cola:
+            raise RuntimeError(cola.pop(0))
+        return f"respuesta-de-{proveedor}"
+
+    generar.llamadas = llamadas
+    return generar
+
+
+class TestReintentoInteligentePorVentanaDeCuota(unittest.TestCase):
+    """429 persistente (2026-07-20): distinguir limite POR MINUTO (recuperable
+    en segundos, vale un reintento corto) de limite POR DIA (Groq/Gemini TPD,
+    reintentar de inmediato es puro desperdicio -- el propio proveedor dice
+    "please retry in Nm", no "in Ns")."""
+
+    MSG_TPM_GROQ = ("Rate limit reached for model `llama-3.3-70b-versatile` "
+                    "on requests per minute (RPM): Limit 30, Used 30, "
+                    "Requested 1. Please try again in 2s.")
+    MSG_TPD_GROQ = ("Rate limit reached for model `llama-3.3-70b-versatile` "
+                    "on tokens per day (TPD): Limit 100000, Used 99290, "
+                    "Requested 1743. Please try again in 14m52s.")
+    MSG_TPD_GEMINI = ("Quota exceeded for metric: generate_content_free_tier_requests. "
+                      "GenerateRequestsPerDayPerProjectPerModel-FreeTier")
+
+    def test_16_limite_por_minuto_reintenta_y_recupera_sin_caer_al_fallback(self):
+        """Un 429 de RPM que se resuelve en el 2do intento NO debe saltar a
+        Gemini -- el reintento corto alcanza para que Groq responda igual."""
+        gen = _generador_con_error({"groq": [self.MSG_TPM_GROQ]})
+        with patch("core.services.llm_service.asyncio.sleep",
+                  new_callable=AsyncMock) as m_sleep:
+            r = _run(LlmService(generador=gen).generar("informe"))
+        self.assertEqual(r["proveedor"], "groq",
+                         "el reintento corto debe alcanzar, sin caer a Gemini")
+        self.assertEqual(gen.llamadas.count("groq"), 2, "1 fallo + 1 reintento")
+        m_sleep.assert_called_once()
+        self.assertAlmostEqual(m_sleep.call_args.args[0], 5.0, delta=0.01)
+
+    def test_17_limite_diario_NO_reintenta_salta_directo_al_fallback(self):
+        """Un 429 de TPD/RPD no debe esperar ni reintentar -- salta a Gemini
+        de inmediato (reintentar solo repetiria el mismo error)."""
+        gen = _generador_con_error({"groq": [self.MSG_TPD_GROQ]})
+        with patch("core.services.llm_service.asyncio.sleep",
+                  new_callable=AsyncMock) as m_sleep:
+            r = _run(LlmService(generador=gen).generar("informe"))
+        self.assertEqual(r["proveedor"], "gemini")
+        self.assertEqual(gen.llamadas.count("groq"), 1,
+                         "limite diario: UN solo intento, cero reintentos")
+        m_sleep.assert_not_called()
+
+    def test_18_reintentos_topados_en_2_luego_cae_al_fallback(self):
+        """Si el limite por minuto persiste mas de REINTENTOS_LIMITE_MINUTO,
+        se abandona el proveedor (no reintenta para siempre)."""
+        gen = _generador_con_error({"groq": [self.MSG_TPM_GROQ, self.MSG_TPM_GROQ,
+                                             self.MSG_TPM_GROQ]})
+        with patch("core.services.llm_service.asyncio.sleep",
+                  new_callable=AsyncMock):
+            r = _run(LlmService(generador=gen).generar("informe"))
+        self.assertEqual(r["proveedor"], "gemini")
+        self.assertEqual(gen.llamadas.count("groq"), 3,
+                         "1 intento inicial + 2 reintentos (tope), despues abandona")
+
+    def test_19_gemini_limite_diario_tampoco_reintenta(self):
+        """El mismo criterio aplica a Gemini (RequestsPerDay), no solo Groq."""
+        gen = _generador_con_error({"groq": ["boom"], "gemini": [self.MSG_TPD_GEMINI]})
+        with patch("core.services.llm_service.asyncio.sleep",
+                  new_callable=AsyncMock) as m_sleep:
+            _run(LlmService(generador=gen).generar("informe"))
+        self.assertEqual(gen.llamadas.count("gemini"), 1)
+        m_sleep.assert_not_called()
 
 
 class TestMockReporteEstructurado(unittest.TestCase):

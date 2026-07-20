@@ -1101,6 +1101,16 @@ class Orquestador:
           de la cadena de fallback (ADR-0017), que ya reintenta por llamada
           individual pero no espacia la rafaga completa. Un exito real en
           Groq resetea el contador.
+        - `agentes_prioritarios` (config.json > orquestador, lista de ids,
+          2026-07-20): cuando la cuota diaria de Groq esta casi agotada, solo
+          alcanza para las PRIMERAS llamadas del lote (verificado en vivo:
+          Used 99290/100000 — hay margen para ~1 peticion, no 17). Delays
+          artificiales entre agentes NO liberan cuota diaria (TPD), asi que
+          el unico control real es QUIEN sale primero a pedir lo que queda.
+          Los ids listados se DESPACHAN primero (compiten antes por el
+          semaforo/cuota); el resto sigue en su orden de config.json. El
+          orden de RETORNO no cambia — sigue siendo el de self.agentes, para
+          no romper el zip(agentes_cfg, resultados) de main.py.
 
         Devuelve los resultados en el MISMO orden que self.agentes (orden de
         config.json), alineado con el zip del dashboard de main.py.
@@ -1109,6 +1119,12 @@ class Orquestador:
         max_paralelo = max_paralelo or cfg_orq.get("max_agentes_paralelo", 4)
         timeout_s    = timeout_s or cfg_orq.get("timeout_tarea_s", 180)
         semaforo     = asyncio.Semaphore(max_paralelo)
+
+        ids_originales = list(self.agentes.keys())
+        prioritarios   = [aid for aid in cfg_orq.get("agentes_prioritarios", [])
+                          if aid in self.agentes]
+        orden_despacho = prioritarios + [aid for aid in ids_originales
+                                         if aid not in prioritarios]
 
         UMBRAL_429_PERSISTENTE = 2
         JITTER_BASE_S          = 1.5
@@ -1148,10 +1164,16 @@ class Orquestador:
                 return resultado
 
         logger.info(
-            "PARALELO: %d agentes, max_paralelo=%d, timeout=%.0fs",
+            "PARALELO: %d agentes, max_paralelo=%d, timeout=%.0fs%s",
             len(self.agentes), max_paralelo, timeout_s,
+            f", prioritarios={prioritarios}" if prioritarios else "",
         )
-        return await asyncio.gather(*[_uno(a) for a in self.agentes.values()])
+        # Las tareas se CREAN (y por tanto compiten por el semaforo, en
+        # orden FIFO) segun orden_despacho; se recolectan segun
+        # ids_originales para que el orden de retorno no cambie.
+        tareas = {aid: asyncio.create_task(_uno(self.agentes[aid]))
+                 for aid in orden_despacho}
+        return await asyncio.gather(*[tareas[aid] for aid in ids_originales])
 
     # ── Recarga dinámica ───────────────────────────────────────────────────────
 

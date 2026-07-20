@@ -48,11 +48,31 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
 logger = logging.getLogger(__name__)
+
+# ── Clasificación de 429 por ventana de cuota (2026-07-20) ────────────────────
+# Un 429 "tokens/solicitudes POR MINUTO" (TPM/RPM) se recupera en segundos —
+# vale la pena un reintento corto. Un 429 "POR DIA" (TPD/RPD) no se recupera
+# en segundos ni minutos (el propio proveedor suele indicar "retry in Nm") —
+# reintentar de inmediato es puro desperdicio: la MISMA llamada vuelve a
+# fallar con el mismo error. Groq y Gemini declaran la ventana explícitamente
+# en el mensaje de error (verificado en vivo, 2026-07-20).
+_PATRON_LIMITE_DIA    = re.compile(r"per\s*day|PerDay|diari[oa]", re.I)
+_PATRON_LIMITE_MINUTO = re.compile(r"per\s*minute|PerMinute", re.I)
+
+
+def _es_limite_por_minuto(mensaje: str) -> bool:
+    """True solo si el 429 declara ventana POR MINUTO (recuperable en segundos)."""
+    return bool(_PATRON_LIMITE_MINUTO.search(mensaje)) and not _PATRON_LIMITE_DIA.search(mensaje)
+
+
+REINTENTOS_LIMITE_MINUTO = 2      # máximo de reintentos cortos por 429 de TPM/RPM
+ESPERA_LIMITE_MINUTO_S   = 5.0    # espera entre reintentos (no aplica a límites diarios)
 
 # Modelo por defecto de cada eslabón de la cadena
 CADENA_FALLBACK: list[tuple[str, str]] = [
@@ -262,44 +282,66 @@ class LlmService:
                 continue
 
             t0 = time.monotonic()
-            try:
-                resultado_gen = await asyncio.wait_for(
-                    self._generar_con_uso(modelo, prompt, temperatura, prioridad),
-                    timeout=self._latencia_max_s,
-                )
-                cb.registrar_exito()
-                self._latencias[proveedor].append(time.monotonic() - t0)
-                self._ultimo_error.pop(proveedor, None)
-                if intentos:
-                    logger.warning(
-                        "LLM_FALLBACK: respondio '%s' tras saltar %s",
-                        proveedor, intentos,
+            reintento_minuto = 0
+            while True:
+                try:
+                    resultado_gen = await asyncio.wait_for(
+                        self._generar_con_uso(modelo, prompt, temperatura, prioridad),
+                        timeout=self._latencia_max_s,
                     )
-                return {
-                    "texto":     resultado_gen["texto"],
-                    "proveedor": proveedor,
-                    "modelo":    modelo,
-                    "intentos":  intentos + [f"{proveedor}:ok"],
-                    "degradado": proveedor == "mock",
-                    "tokens_entrada": resultado_gen.get("tokens_entrada"),
-                    "tokens_salida":  resultado_gen.get("tokens_salida"),
-                    "tokens_total":   resultado_gen.get("tokens_total"),
-                    "tokens_exactos": resultado_gen.get("tokens_exactos", False),
-                }
-            except asyncio.TimeoutError:
-                cb.registrar_fallo()
-                self._ultimo_error[proveedor] = f"latencia>{self._latencia_max_s:.0f}s"
-                intentos.append(f"{proveedor}:latencia>{self._latencia_max_s:.0f}s")
-                logger.warning("CIRCUIT_BREAKER: '%s' excedio latencia (%.0fs) — "
-                               "fallos=%d", proveedor, self._latencia_max_s,
-                               cb.fallos_consecutivos)
-            except Exception as exc:
-                cb.registrar_fallo()
-                self._ultimo_error[proveedor] = f"{type(exc).__name__}: {str(exc)[:120]}"
-                intentos.append(f"{proveedor}:{type(exc).__name__}")
-                logger.warning("CIRCUIT_BREAKER: '%s' fallo (%s) — fallos=%d "
-                               "dur=%.1fs", proveedor, exc,
-                               cb.fallos_consecutivos, time.monotonic() - t0)
+                    cb.registrar_exito()
+                    self._latencias[proveedor].append(time.monotonic() - t0)
+                    self._ultimo_error.pop(proveedor, None)
+                    if intentos:
+                        logger.warning(
+                            "LLM_FALLBACK: respondio '%s' tras saltar %s",
+                            proveedor, intentos,
+                        )
+                    return {
+                        "texto":     resultado_gen["texto"],
+                        "proveedor": proveedor,
+                        "modelo":    modelo,
+                        "intentos":  intentos + [f"{proveedor}:ok"],
+                        "degradado": proveedor == "mock",
+                        "tokens_entrada": resultado_gen.get("tokens_entrada"),
+                        "tokens_salida":  resultado_gen.get("tokens_salida"),
+                        "tokens_total":   resultado_gen.get("tokens_total"),
+                        "tokens_exactos": resultado_gen.get("tokens_exactos", False),
+                    }
+                except asyncio.TimeoutError:
+                    cb.registrar_fallo()
+                    self._ultimo_error[proveedor] = f"latencia>{self._latencia_max_s:.0f}s"
+                    intentos.append(f"{proveedor}:latencia>{self._latencia_max_s:.0f}s")
+                    logger.warning("CIRCUIT_BREAKER: '%s' excedio latencia (%.0fs) — "
+                                   "fallos=%d", proveedor, self._latencia_max_s,
+                                   cb.fallos_consecutivos)
+                    break
+                except Exception as exc:
+                    mensaje = str(exc)
+                    # 429 persistente (2026-07-20): un limite POR MINUTO se
+                    # recupera en segundos — vale un reintento corto DENTRO
+                    # del mismo proveedor, sin gastar el circuito ni saltar
+                    # de inmediato al siguiente eslabon de la cadena. Un
+                    # limite POR DIA (Groq/Gemini TPD/RPD) NO se recupera en
+                    # segundos: reintentar solo repetiria el mismo error.
+                    if (_es_limite_por_minuto(mensaje)
+                            and reintento_minuto < REINTENTOS_LIMITE_MINUTO):
+                        reintento_minuto += 1
+                        logger.warning(
+                            "LLM_RETRY: '%s' 429 por-minuto (intento %d/%d) — "
+                            "esperando %.0fs antes de reintentar: %s",
+                            proveedor, reintento_minuto, REINTENTOS_LIMITE_MINUTO,
+                            ESPERA_LIMITE_MINUTO_S, mensaje[:160],
+                        )
+                        await asyncio.sleep(ESPERA_LIMITE_MINUTO_S)
+                        continue
+                    cb.registrar_fallo()
+                    self._ultimo_error[proveedor] = f"{type(exc).__name__}: {mensaje[:120]}"
+                    intentos.append(f"{proveedor}:{type(exc).__name__}")
+                    logger.warning("CIRCUIT_BREAKER: '%s' fallo (%s) — fallos=%d "
+                                   "dur=%.1fs", proveedor, exc,
+                                   cb.fallos_consecutivos, time.monotonic() - t0)
+                    break
 
         raise RuntimeError(f"Cadena LLM agotada sin respuesta: {intentos}")
 
