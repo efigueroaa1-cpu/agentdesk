@@ -93,6 +93,73 @@ class TestParaleloControlado(unittest.TestCase):
         self.assertEqual(len(resultados), 1)
 
 
+class _AgenteFakeOrden:
+    """Doble de AgentBase: registra el orden real de DESPACHO (cuando se
+    invoca realizar_tarea), no solo el resultado."""
+
+    llamadas_orden: list[str] = []
+
+    def __init__(self, aid, tardanza_s=0.0):
+        self.aid = aid
+        self.nombre = aid
+        self._tardanza = tardanza_s
+
+    async def realizar_tarea(self, tarea, _datos_override=None):
+        _AgenteFakeOrden.llamadas_orden.append(self.aid)
+        if self._tardanza:
+            await asyncio.sleep(self._tardanza)
+        return {"resumen": f"ok-{self.aid}"}
+
+
+class TestOrdenDeDespachoPrioritario(unittest.TestCase):
+    """agentes_prioritarios (2026-07-20): con cuota diaria casi agotada solo
+    alcanza para las primeras llamadas del lote -- lo unico que puede
+    cambiar eso es QUIEN sale primero, no delays artificiales (que no
+    liberan cuota diaria/TPD)."""
+
+    def setUp(self):
+        _AgenteFakeOrden.llamadas_orden = []
+
+    def test_11_agentes_prioritarios_se_despachan_primero(self):
+        agentes = {aid: _AgenteFakeOrden(aid) for aid in ["a1", "a2", "a3", "a4", "a5"]}
+        orq = _orquestador_con(agentes, {
+            "max_agentes_paralelo": 1,   # serializa -> orden 100% determinista
+            "timeout_tarea_s": 5,
+            "agentes_prioritarios": ["a4", "a2"],
+        })
+        asyncio.run(orq.ejecutar_todos_paralelo("reporte_ventas"))
+
+        self.assertEqual(_AgenteFakeOrden.llamadas_orden[:2], ["a4", "a2"],
+                         "los prioritarios deben despacharse primero, en su orden declarado")
+        self.assertEqual(set(_AgenteFakeOrden.llamadas_orden), set(agentes.keys()))
+
+    def test_12_orden_de_retorno_no_cambia_pese_a_la_prioridad(self):
+        agentes = {aid: _AgenteFakeOrden(aid) for aid in ["a1", "a2", "a3"]}
+        orq = _orquestador_con(agentes, {
+            "max_agentes_paralelo": 1, "timeout_tarea_s": 5,
+            "agentes_prioritarios": ["a3"],
+        })
+        resultados = asyncio.run(orq.ejecutar_todos_paralelo("reporte_ventas"))
+        self.assertEqual([r["resumen"] for r in resultados], ["ok-a1", "ok-a2", "ok-a3"],
+                         "el orden de RETORNO sigue siendo el de config.json")
+
+    def test_13_sin_prioritarios_el_despacho_es_el_orden_original(self):
+        agentes = {aid: _AgenteFakeOrden(aid) for aid in ["a1", "a2", "a3"]}
+        orq = _orquestador_con(agentes, {"max_agentes_paralelo": 1, "timeout_tarea_s": 5})
+        asyncio.run(orq.ejecutar_todos_paralelo("reporte_ventas"))
+        self.assertEqual(_AgenteFakeOrden.llamadas_orden, ["a1", "a2", "a3"])
+
+    def test_14_id_prioritario_inexistente_se_ignora_sin_romper(self):
+        agentes = {aid: _AgenteFakeOrden(aid) for aid in ["a1", "a2"]}
+        orq = _orquestador_con(agentes, {
+            "max_agentes_paralelo": 1, "timeout_tarea_s": 5,
+            "agentes_prioritarios": ["fantasma", "a2"],
+        })
+        resultados = asyncio.run(orq.ejecutar_todos_paralelo("reporte_ventas"))
+        self.assertEqual(_AgenteFakeOrden.llamadas_orden, ["a2", "a1"])
+        self.assertEqual(len(resultados), 2)
+
+
 class _AgenteFakeConProveedor:
     """Doble de AgentBase: simula que llm_service degrado (o no) fuera de Groq.
 
