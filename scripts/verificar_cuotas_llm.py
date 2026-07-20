@@ -34,6 +34,12 @@ MODELOS_DEFAULT = [
     "groq:llama-3.3-70b-versatile",   # 17 expertos ICI
     "groq:llama-3.1-8b-instant",      # 4 agentes de telemetria Modbus
     "gemini:models/gemini-2.5-flash", # U1 + fallback de la cadena
+    "ollama:llama3.2",                # fallback local (ADR-0018) -- unico
+                                       # eslabon de la cadena que no depende
+                                       # de ninguna cuota externa; requiere
+                                       # el servicio Ollama corriendo en
+                                       # localhost:11434 (instalacion aparte,
+                                       # no incluida en el binario)
 ]
 
 PROMPT_MINIMO = "Responde unicamente con la palabra OK."
@@ -54,6 +60,11 @@ def _resumen_error(msg: str) -> str:
         return f"cuota diaria de SOLICITUDES: limite={m.group(1)}/dia"
     if "429" in msg or "RESOURCE_EXHAUSTED" in msg or "rate_limit" in msg.lower():
         return "429 generico (rate limit / cuota) sin detalle parseable"
+    if "Connection error" in msg or "ConnectError" in msg or "actively refused" in msg:
+        return ("Ollama no responde en localhost:11434 -- no es un problema de cuota, "
+                "es que el servicio no esta instalado/corriendo. Instalar desde "
+                "https://ollama.com/download, luego 'ollama pull llama3.2' y dejarlo "
+                "corriendo en segundo plano (no requiere red despues de la descarga).")
     return msg[:160]
 
 
