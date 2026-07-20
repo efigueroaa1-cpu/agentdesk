@@ -12,6 +12,8 @@ de ciclo de vida, WS /ws/telemetria) que registra un router por dominio:
   core/api/sistema_router.py  /health, /version, /backup/*, /diagnostico/*, /metrics, /kill-switch*
   core/api/monitor_router.py  /monitor/*, /scheduler/*, /dashboard/*, /alertas/*, /pipeline/config
   core/api/reportes_router.py /reportes/*, /generar-pdf, /gantt/*, /finanzas/*, /webhook/whatsapp
+  core/api/telemetry_router.py WS /ws/telemetria, /analytics/proyeccion-ot/*, /analytics/roi,
+                               /analytics/riesgo-ot/*, /ot/acciones/* (Gemelo Digital + Comando OT)
 
 Expone (igual que antes del split):
   WS  /ws/telemetria         Emite eventos de telemetria (@measure_latency) en tiempo real.
@@ -39,10 +41,9 @@ archivo (main.py, test_security.py y varios tests dependen de esto).
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -83,6 +84,7 @@ from core.api.agentes_router import router as _agentes_router
 from core.api.sistema_router import router as _sistema_router
 from core.api.monitor_router import router as _monitor_router
 from core.api.reportes_router import router as _reportes_router
+from core.api.telemetry_router import router as _telemetry_router
 
 app.add_middleware(JWTMiddleware)
 app.include_router(_auth_router)
@@ -90,6 +92,7 @@ app.include_router(_agentes_router)
 app.include_router(_sistema_router)
 app.include_router(_monitor_router)
 app.include_router(_reportes_router)
+app.include_router(_telemetry_router)
 
 # ── React UI estático en /ui/ ──────────────────────────────────────────────────
 # Servido íntegramente por StaticFiles; el middleware inferior fuerza no-cache
@@ -213,41 +216,3 @@ async def shutdown() -> None:
                 await tarea
             except asyncio.CancelledError:
                 pass
-
-
-@app.websocket("/ws/telemetria")
-async def websocket_telemetria(ws: WebSocket) -> None:
-    """
-    Endpoint WebSocket. El dashboard React conecta aquí para recibir:
-      - eventos de telemetría (@measure_latency) de los filtros del pipeline
-      - notificaciones de agente_creado
-      - cualquier mensaje que el servidor quiera enviar en tiempo real
-
-    Protocolo: el cliente puede enviar {"ping": true} para keepalive.
-    Autenticación: JWT en query param ?token=<jwt>  (browser WS no permite headers).
-    El rol del token determina qué mensajes recibe el cliente (RBAC en broadcast).
-    """
-    from core.auth import verificar_token as _vt
-    token   = ws.query_params.get("token", "")
-    payload = _vt(token) if token else None
-    rol     = (payload or {}).get("role", "viewer")
-
-    await manager.connect(ws, rol=rol)
-    await ws.send_text(json.dumps({
-        "tipo":    "conexion",
-        "mensaje": "Conectado al servidor de telemetria AgentDesk.",
-        "rol":     rol,
-    }))
-
-    try:
-        while True:
-            data = await ws.receive_text()
-            # Responder a pings para mantener la conexion viva
-            try:
-                msg = json.loads(data)
-                if msg.get("ping"):
-                    await ws.send_text(json.dumps({"pong": True}))
-            except json.JSONDecodeError:
-                pass
-    except WebSocketDisconnect:
-        manager.disconnect(ws)
