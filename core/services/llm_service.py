@@ -87,6 +87,16 @@ LATENCIA_MAX_S   = 30.0    # más de esto = proveedor 'colgado' → abrir circui
 ENFRIAMIENTO_S   = 120.0   # tiempo que un circuito abierto permanece inactivo
 FALLOS_PARA_ABRIR = 2      # fallos consecutivos que abren el circuito
 
+# Latencia máxima por proveedor (2026-07-20): Ollama corre en hardware local
+# del usuario, sin costo por token ni cuota externa que proteger -- a
+# diferencia de un proveedor cloud colgado (donde 30s sin respuesta es señal
+# real de falla), la inferencia CPU/GPU local bajo carga concurrente puede
+# tardar legítimamente más sin estar "caída". Verificado en vivo: 3 agentes
+# ICI concurrentes contra Ollama excedieron 30s y abrieron el circuito,
+# cayendo los 22 agentes a Mock pese a que Ollama respondía. Los proveedores
+# cloud (Groq/Gemini/OpenAI) NO cambian: un cuelgue ahí sí debe cortarse rápido.
+LATENCIA_MAX_POR_PROVEEDOR: dict[str, float] = {"ollama": 60.0}
+
 
 @dataclass
 class CircuitBreaker:
@@ -127,6 +137,7 @@ class LlmService:
         generador_con_uso: Callable[[str, str, float, int], Awaitable[dict]] | None = None,
         cadena: list[tuple[str, str]] | None = None,
         latencia_max_s: float = LATENCIA_MAX_S,
+        latencia_por_proveedor: dict[str, float] | None = None,
     ):
         if generador_con_uso is not None:
             self._generar_con_uso = generador_con_uso
@@ -147,6 +158,10 @@ class LlmService:
 
         self._cadena         = cadena or list(CADENA_FALLBACK)
         self._latencia_max_s = latencia_max_s
+        self._latencia_por_proveedor = (
+            latencia_por_proveedor if latencia_por_proveedor is not None
+            else dict(LATENCIA_MAX_POR_PROVEEDOR)
+        )
         self._circuitos: dict[str, CircuitBreaker] = {
             proveedor: CircuitBreaker() for proveedor, _ in self._cadena
         }
@@ -283,11 +298,12 @@ class LlmService:
 
             t0 = time.monotonic()
             reintento_minuto = 0
+            timeout_efectivo = self._latencia_por_proveedor.get(proveedor, self._latencia_max_s)
             while True:
                 try:
                     resultado_gen = await asyncio.wait_for(
                         self._generar_con_uso(modelo, prompt, temperatura, prioridad),
-                        timeout=self._latencia_max_s,
+                        timeout=timeout_efectivo,
                     )
                     cb.registrar_exito()
                     self._latencias[proveedor].append(time.monotonic() - t0)
@@ -310,10 +326,10 @@ class LlmService:
                     }
                 except asyncio.TimeoutError:
                     cb.registrar_fallo()
-                    self._ultimo_error[proveedor] = f"latencia>{self._latencia_max_s:.0f}s"
-                    intentos.append(f"{proveedor}:latencia>{self._latencia_max_s:.0f}s")
+                    self._ultimo_error[proveedor] = f"latencia>{timeout_efectivo:.0f}s"
+                    intentos.append(f"{proveedor}:latencia>{timeout_efectivo:.0f}s")
                     logger.warning("CIRCUIT_BREAKER: '%s' excedio latencia (%.0fs) — "
-                                   "fallos=%d", proveedor, self._latencia_max_s,
+                                   "fallos=%d", proveedor, timeout_efectivo,
                                    cb.fallos_consecutivos)
                     break
                 except Exception as exc:
