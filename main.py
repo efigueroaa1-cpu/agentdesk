@@ -85,8 +85,10 @@ async def main() -> None:
 
     log.info("Sistema iniciado", extra={"model": model_name})
 
+    from core.path_manager import config_path
+
     bridge       = CommandBridge()
-    app          = Orquestador("config.json", client, model_name, bridge=bridge)
+    app          = Orquestador(str(config_path()), client, model_name, bridge=bridge)
     from core.tools import set_orquestador
     set_orquestador(app)   # ADR-0011: delegacion cognitiva Speak/Listen
     tarea_bridge = asyncio.create_task(app.procesar_comandos())

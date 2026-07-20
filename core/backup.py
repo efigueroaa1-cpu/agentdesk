@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 @costo_recursos(cpu="bajo", memoria="alto")
 def crear_backup() -> bytes:
     """Crea un ZIP de backup y devuelve sus bytes."""
-    from core.path_manager import data_path, resource_path
+    from core.path_manager import data_path, config_path
 
     buf     = io.BytesIO()
     ts      = utcnow().strftime("%Y%m%d_%H%M%S")
@@ -77,9 +77,11 @@ def crear_backup() -> bytes:
         if users.exists():
             zf.write(users, "users.json")
 
-        # Config de agentes (desde _internal)
+        # Config de agentes (copia escribible en %APPDATA% — Soberania de
+        # Datos, 2026-07-20: antes se leia de _internal/, la plantilla del
+        # binario, que nunca reflejaba ediciones del usuario)
         try:
-            cfg = resource_path("config.json")
+            cfg = config_path()
             if cfg.exists():
                 zf.write(cfg, "config.json")
         except Exception:

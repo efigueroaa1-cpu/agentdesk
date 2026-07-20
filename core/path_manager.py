@@ -89,8 +89,31 @@ def data_path(relative_path: str) -> Path:
     return full
 
 
+# ── config.json: Soberanía de Datos (2026-07-20) ──────────────────────────────
+
+def config_path() -> Path:
+    """
+    Ruta ESCRIBIBLE de config.json — nunca vive dentro del binario.
+
+    Prioridad 1: %APPDATA%\\AgentDesk\\config.json (ya inicializado o editado
+    por el usuario — jamás se sobreescribe si existe).
+    Si no existe, se bootstrapea UNA sola vez copiando la plantilla de solo
+    lectura empaquetada con el exe (resource_path) — mismo patrón que
+    .env/env.example en config_api.py. Así una reinstalación/actualización
+    del .exe nunca pisa los agentes/prompts que el usuario personalizó, y
+    restaurar_backup() (que ya escribía config.json en data_path) deja de ser
+    una escritura muerta que nadie volvía a leer.
+    """
+    destino = data_path("config.json")
+    if not destino.exists():
+        plantilla = resource_path("config.json")
+        if plantilla.exists():
+            import shutil
+            shutil.copy(plantilla, destino)
+    return destino
+
+
 # ── Constantes de rutas de uso frecuente ──────────────────────────────────────
 
-CONFIG_PATH   = resource_path("config.json")
 LOG_PATH      = data_path("logs/sistema.log")
 REPORTES_DIR  = data_path("reportes")  # directorio base, sin archivo

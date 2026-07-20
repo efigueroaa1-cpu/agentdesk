@@ -264,7 +264,7 @@ async def _auto_iniciar_orquestador() -> None:
     try:
         from google import genai
         from core.orchestrator import Orquestador
-        from core.path_manager import resource_path
+        from core.path_manager import config_path as _config_path
 
         client = genai.Client(api_key=api_key)
         pager  = await client.aio.models.list()
@@ -278,10 +278,10 @@ async def _auto_iniciar_orquestador() -> None:
             logger.error("API startup: ningún modelo Gemini disponible.")
             return
 
-        config_path = str(resource_path("config.json"))
+        ruta_config = str(_config_path())
 
         bridge = CommandBridge()
-        orch   = Orquestador(config_path, client, model, bridge=bridge)
+        orch   = Orquestador(ruta_config, client, model, bridge=bridge)
 
         registrar_bridge(bridge)
         registrar_orquestador(orch)

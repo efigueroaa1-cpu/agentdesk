@@ -233,22 +233,35 @@ if ($DeployLocal) {
     Copy-Item "$DistDir\*" $AppData -Recurse -Force
     OK "Backend actualizado en $AppData"
 
+    # Soberania de Datos (2026-07-20): .env y config.json NUNCA viven en
+    # $AppData (LocalAppData\AgentDesk\AgentDesk — carpeta de INSTALACION
+    # del binario, se pisa en cada reinstalacion). config_api.py y
+    # core/path_manager.py::config_path() leen ambos de %APPDATA%\AgentDesk
+    # (Roaming — datos del usuario, sobreviven a reinstalaciones). Este
+    # bloque copiaba antes a $AppData por error (mismo nombre de variable,
+    # carpeta de Windows distinta) — la copia nunca la encontraba la app.
+    $RoamingAppData = Join-Path $env:APPDATA "AgentDesk"
+    if (-not (Test-Path $RoamingAppData)) {
+        New-Item -ItemType Directory -Force $RoamingAppData | Out-Null
+    }
+
     # Copiar .env si existe en la raiz del proyecto (primer arranque)
     $envSrc = Join-Path $Root ".env"
-    $envDst = Join-Path $AppData ".env"
+    $envDst = Join-Path $RoamingAppData ".env"
     if ((Test-Path $envSrc) -and -not (Test-Path $envDst)) {
         Copy-Item $envSrc $envDst
-        OK ".env copiado a AppData (primer arranque)"
+        OK ".env copiado a %APPDATA%\AgentDesk (primer arranque)"
     } elseif (-not (Test-Path $envSrc)) {
         Warn ".env no encontrado en $Root — crea uno con MASTER_PASSWORD_HASH y GEMINI_API_KEY"
     }
 
-    # Copiar config.json por defecto si no existe
+    # Copiar config.json por defecto si no existe (bootstrap manual — el
+    # mismo bootstrap tambien ocurre solo al primer arranque via config_path())
     $cfgSrc = Join-Path $Root "config.json"
-    $cfgDst = Join-Path $AppData "_internal\config.json"
+    $cfgDst = Join-Path $RoamingAppData "config.json"
     if ((Test-Path $cfgSrc) -and -not (Test-Path $cfgDst)) {
         Copy-Item $cfgSrc $cfgDst
-        OK "config.json copiado a AppData (primer arranque)"
+        OK "config.json copiado a %APPDATA%\AgentDesk (primer arranque)"
     }
 }
 
