@@ -43,6 +43,60 @@ class TestModbusAdapter(unittest.TestCase):
         self.assertEqual({e.fuente for e in recibidos}, {s["id"] for s in SENSORES})
 
 
+class _ClienteEspiaCierre:
+    """Cliente fake que registra si se cerro (para verificar higiene de socket)."""
+
+    def __init__(self):
+        self.cerrado = False
+        self.lecturas = []
+
+    def read_holding_registers(self, address, count=1, device_id=None):
+        self.lecturas.append(address)
+        if address == 40000:
+            return _RespuestaFake(registers=[20])
+        return _RespuestaFake(error=True)
+
+    def close(self):
+        self.cerrado = True
+
+
+class TestHigieneConexion(unittest.TestCase):
+    """leer_snapshot es una lectura PUNTUAL (docstring): no debe dejar el
+    socket TCP abierto entre corridas — cada 'Opcion Paralelo' abandonaba un
+    ModbusTcpClient sin cerrar (2026-07-20), acumulando conexiones que
+    terminaron dejando a ModbusPal sin responder ('No response received')."""
+
+    BLOQUES = [{"unidad": "U1", "unit_id": 1,
+               "registros": [{"registro": 40001, "variable": "temperatura",
+                              "escala": 1.0, "unidad": "C"}]}]
+
+    def test_12_snapshot_cierra_la_conexion_al_terminar(self):
+        adaptador = ModbusTelemetryAdapter(host="127.0.0.1:5021")
+        cliente = _ClienteEspiaCierre()
+        adaptador._cliente = cliente
+        adaptador.leer_snapshot(self.BLOQUES)
+        self.assertTrue(cliente.cerrado,
+                        "leer_snapshot debe cerrar la conexion al finalizar")
+        self.assertIsNone(adaptador._cliente,
+                         "tras cerrar, _cliente debe quedar en None (fuerza reconexion limpia)")
+
+    def test_13_snapshot_cierra_incluso_si_alguna_unidad_fallo(self):
+        adaptador = ModbusTelemetryAdapter(host="127.0.0.1:5021")
+        cliente = _ClienteEspiaCierre()
+        adaptador._cliente = cliente
+        bloques_con_fallo = self.BLOQUES + [
+            {"unidad": "U3", "unit_id": 3,
+             "registros": [{"registro": 40099, "variable": "x", "escala": 1.0, "unidad": ""}]}
+        ]
+        adaptador.leer_snapshot(bloques_con_fallo)
+        self.assertTrue(cliente.cerrado)
+
+    def test_14_snapshot_sin_host_no_intenta_cerrar_nada(self):
+        """Modo simulador: no hay cliente real, no debe lanzar al 'cerrar'."""
+        adaptador = ModbusTelemetryAdapter(host="")
+        adaptador.leer_snapshot(self.BLOQUES)   # no debe lanzar
+
+
 class TestLeerSnapshot(unittest.TestCase):
     """leer_snapshot: lectura puntual consolidada para pipelines de análisis
     (Opción Paralelo) — sin host degrada al simulador, jamás lanza."""
