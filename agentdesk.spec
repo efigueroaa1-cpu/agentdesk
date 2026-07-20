@@ -16,6 +16,12 @@ a = Analysis(
     pathex=[str(ROOT)],
     binaries=[],
     datas=[
+        # config.json: SOLO plantilla semilla de solo lectura (Soberania de
+        # Datos, 2026-07-20). En runtime, config_path() (core/path_manager.py)
+        # la copia UNA vez a %APPDATA%\AgentDesk\config.json y todo lector/
+        # escritor real (orchestrator, backup, API) usa esa copia — mismo
+        # patron que env.example -> .env. Reinstalar/actualizar el .exe
+        # nunca vuelve a tocar los agentes/prompts que el usuario edito.
         (str(ROOT / "config.json"),                      "."),
         (str(ROOT / "datos_trabajo.json"),               "."),
         (str(ROOT / "env.example"),                      "."),

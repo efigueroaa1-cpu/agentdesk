@@ -1,14 +1,15 @@
 """
 config_loader: carga y valida config.json.
 
-Usa path_manager.resource_path() para que config.json se encuentre
-tanto en desarrollo (ruta relativa) como en el ejecutable PyInstaller
-(sys._MEIPASS), sin cambiar ninguna llamada en el resto del proyecto.
+Usa path_manager.config_path() (Soberanía de Datos, 2026-07-20): la copia
+ESCRIBIBLE en %APPDATA%\\AgentDesk, nunca la plantilla empaquetada con el
+exe. Se bootstrapea sola la primera vez; ediciones del usuario y backups
+restaurados sobreviven a reinstalaciones del binario.
 """
 
 import json
 from pathlib import Path
-from core.path_manager import resource_path
+from core.path_manager import config_path
 
 
 def load_config(path: str | Path | None = None) -> dict:
@@ -17,8 +18,8 @@ def load_config(path: str | Path | None = None) -> dict:
 
     Parámetros
     ----------
-    path : ruta explícita (str o Path). Si se omite, usa resource_path("config.json"),
-           que resuelve correctamente tanto en desarrollo como en el ejecutable.
+    path : ruta explícita (str o Path). Si se omite, usa config_path()
+           (la copia escribible en %APPDATA%, bootstrapeada si hace falta).
 
     Retorna
     -------
@@ -29,7 +30,7 @@ def load_config(path: str | Path | None = None) -> dict:
     FileNotFoundError  si el archivo no existe
     ValueError         si el JSON está malformado o falta la clave 'agents'
     """
-    ruta = Path(path) if path is not None else resource_path("config.json")
+    ruta = Path(path) if path is not None else config_path()
 
     if not ruta.exists():
         raise FileNotFoundError(f"Archivo de configuracion no encontrado: {ruta}")
