@@ -83,7 +83,10 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # Groq en ejecutar_todos_paralelo — 2+ agentes seguidos degradados fuera
     # de Groq (ultimo_proveedor_llm != "groq") espacian la siguiente llamada
     # 1.5s+jitter antes de seguir la rafaga; exito real en Groq resetea
-    "core/orchestrator.py":                                             1425,
+    # subio 1425->1447 (2026-07-20): agentes_prioritarios -- con cuota diaria
+    # casi agotada, despachar primero a los agentes criticos (config.json >
+    # orquestador) en vez de delays ciegos que no liberan cuota TPD
+    "core/orchestrator.py":                                             1447,
     # tools.py subio 1120->1153 (2026-07-14): evaluador AST que reemplaza eval()
     # subio 1153->1209 (2026-07-15, ADR-0011): tool consultar_a_otro_agente
     # + set_orquestador() (delegacion cognitiva Speak/Listen)
@@ -137,7 +140,9 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # subio 1239->1243 (2026-07-20): justificacion del trinquete de
     # orchestrator.py (jitter por saturacion persistente de Groq) — el
     # propio comentario suma sus lineas al conteo (trampa recurrente)
-    "scripts/gate.py":                                                  1244,
+    # subio 1244->1250 (2026-07-20): justificacion del trinquete de
+    # orchestrator.py (agentes_prioritarios)
+    "scripts/gate.py":                                                  1249,
     "dashboard.py":                                                     1257,
     # ui/dashboard subio 1257->1271 (2026-07-19): titulo dinamico del header
     # (_titulo_app: etiqueta [MODBUS] si AGENTDESK_MODBUS_HOST esta definida)
