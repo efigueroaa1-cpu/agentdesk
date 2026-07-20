@@ -183,7 +183,10 @@
         "lat": -33.45,
         "lng": -70.66,
         "label": "Santiago, Chile"
-      }
+      },
+      "harnesses": [
+        "memoria"
+      ]
     },
     {
       "id": "agente_scm_01",
@@ -199,7 +202,10 @@
         "lat": -33.45,
         "lng": -70.65,
         "label": "Santiago, Chile"
-      }
+      },
+      "harnesses": [
+        "memoria"
+      ]
     },
     {
       "id": "agente_logistica_01",
@@ -215,7 +221,10 @@
         "lat": -33.46,
         "lng": -70.67,
         "label": "Santiago, Chile"
-      }
+      },
+      "harnesses": [
+        "memoria"
+      ]
     },
     {
       "id": "agente_finanzas_corp_01",
@@ -231,7 +240,10 @@
         "lat": -33.44,
         "lng": -70.65,
         "label": "Santiago, Chile"
-      }
+      },
+      "harnesses": [
+        "memoria"
+      ]
     },
     {
       "id": "agente_procesos_01",
@@ -247,7 +259,10 @@
         "lat": -33.47,
         "lng": -70.66,
         "label": "Santiago, Chile"
-      }
+      },
+      "harnesses": [
+        "memoria"
+      ]
     },
     {
       "id": "agente_estrategia_01",
@@ -263,7 +278,10 @@
         "lat": -33.44,
         "lng": -70.64,
         "label": "Santiago, Chile"
-      }
+      },
+      "harnesses": [
+        "memoria"
+      ]
     },
     {
       "id": "agente_eval_proyectos_01",
@@ -279,7 +297,10 @@
         "lat": -33.45,
         "lng": -70.65,
         "label": "Santiago, Chile"
-      }
+      },
+      "harnesses": [
+        "memoria"
+      ]
     },
     {
       "id": "agente_io_01",
@@ -295,7 +316,10 @@
         "lat": -33.46,
         "lng": -70.65,
         "label": "Santiago, Chile"
-      }
+      },
+      "harnesses": [
+        "memoria"
+      ]
     },
     {
       "id": "agente_econometria_01",
@@ -311,7 +335,10 @@
         "lat": -33.43,
         "lng": -70.66,
         "label": "Santiago, Chile"
-      }
+      },
+      "harnesses": [
+        "memoria"
+      ]
     },
     {
       "id": "agente_bi_01",
@@ -327,7 +354,10 @@
         "lat": -33.44,
         "lng": -70.67,
         "label": "Santiago, Chile"
-      }
+      },
+      "harnesses": [
+        "memoria"
+      ]
     },
     {
       "id": "agente_metodos_01",
@@ -343,7 +373,10 @@
         "lat": -33.46,
         "lng": -70.64,
         "label": "Santiago, Chile"
-      }
+      },
+      "harnesses": [
+        "memoria"
+      ]
     },
     {
       "id": "agente_bd_01",
@@ -359,7 +392,10 @@
         "lat": -33.45,
         "lng": -70.66,
         "label": "Santiago, Chile"
-      }
+      },
+      "harnesses": [
+        "memoria"
+      ]
     },
     {
       "id": "agente_finanzas_01",
@@ -375,7 +411,10 @@
         "lat": -33.45,
         "lng": -70.65,
         "label": "Santiago, Chile"
-      }
+      },
+      "harnesses": [
+        "memoria"
+      ]
     },
     {
       "id": "agente_proyectos_01",
@@ -391,7 +430,10 @@
         "lat": -33.47,
         "lng": -70.64,
         "label": "Santiago, Chile"
-      }
+      },
+      "harnesses": [
+        "memoria"
+      ]
     },
     {
       "id": "agente_ingenieria_01",
@@ -407,7 +449,10 @@
         "lat": -33.46,
         "lng": -70.67,
         "label": "Santiago, Chile"
-      }
+      },
+      "harnesses": [
+        "memoria"
+      ]
     },
     {
       "id": "agente_monitor_01",
@@ -423,7 +468,10 @@
         "lat": -33.44,
         "lng": -70.68,
         "label": "Santiago, Chile"
-      }
+      },
+      "harnesses": [
+        "memoria"
+      ]
     },
     {
       "id": "agente_ici_master_01",
@@ -439,7 +487,10 @@
         "lat": -33.45,
         "lng": -70.655,
         "label": "Santiago, Chile"
-      }
+      },
+      "harnesses": [
+        "memoria"
+      ]
     }
   ],
   "orquestador": {

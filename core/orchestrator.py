@@ -801,7 +801,8 @@ class AgentBase:
         return await self.realizar_tarea("analisis_externo", _datos_override=limpio)
 
     async def realizar_tarea(self, tarea: str,
-                             _datos_override: str | dict | None = None) -> dict | None:
+                             _datos_override: str | dict | None = None,
+                             user_id: str = "operador_local") -> dict | None:
         datos    = _datos_override if _datos_override is not None else consultar_datos_seguros(f"LEER {tarea}")
         es_externo = isinstance(datos, str) and tarea in ("analisis_externo", "custom") or \
                      (isinstance(datos, dict) and datos.get("_es_texto_externo"))
@@ -857,6 +858,18 @@ class AgentBase:
             json.dumps(raw_data, ensure_ascii=False, default=str)[:4000],
             extra={"agente": self.nombre, "tarea": tarea},
         )
+
+        # HATs (ADR-0009/0010, 2026-07-20): memoria semantica de auditorias
+        # previas. Antes _contexto_harnesses() solo se invocaba desde
+        # chat_libre/chat_con_herramientas — jamas desde este metodo batch,
+        # que es el que usan los 22 agentes de la Opcion Paralelo. Un agente
+        # con "harnesses": ["memoria"] en config.json ahora SI recupera
+        # contexto relacionado de auditoria_ia para su analisis actual.
+        harness_ctx = await self._contexto_harnesses(
+            json.dumps(raw_data, ensure_ascii=False, default=str)[:2000],
+            self.nombre, user_id,
+        )
+        instruccion = f"{instruccion}{harness_ctx}"
 
         # ── Bucle de auto-corrección: hasta 3 intentos ────────────────────────
         instruccion_actual = instruccion
