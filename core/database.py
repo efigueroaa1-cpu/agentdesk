@@ -389,6 +389,49 @@ def _verificar_conexion_async(db_url: str) -> None:
         ) from exc
 
 
+# Primera revision Alembic del proyecto (Fase 15, ADR-0013). Constante
+# unica: si una DB legada (tablas creadas por create_all() ANTES de que
+# Alembic existiera, sin alembic_version sellada) se detecta, se sella
+# como si esta revision ya estuviera aplicada -- sus tablas YA existen,
+# volver a crearlas fallaria con "table already exists".
+_REVISION_BASELINE = "c403b23afae5"
+
+
+def _sellar_db_legada_si_corresponde(cfg) -> None:
+    """
+    2026-07-20, hallazgo real: una DB creada por una version vieja de la
+    app (create_all() ciego, antes de que Alembic entrara al proyecto)
+    tiene las tablas del baseline pero CERO alembic_version. 'upgrade
+    head' fallaba siempre con "table already exists" al intentar recrear
+    ese baseline -- degradando a create_all() de respaldo EN CADA
+    arranque, para siempre. create_all() no ALTERA tablas existentes, asi
+    que columnas de migraciones posteriores (ej. auditoria_ia.
+    contexto_hats) nunca llegaban: el HAT de memoria fallaba en silencio
+    en cada consulta.
+
+    Deteccion: sin ninguna revision aplicada, pero con una tabla del
+    baseline ya presente -> es legada, no nueva. Se sella el baseline UNA
+    vez; el upgrade real (con las columnas nuevas) sigue su curso normal.
+    """
+    from alembic.runtime.migration import MigrationContext
+    from alembic import command
+    from sqlalchemy import inspect
+
+    with _engine.connect() as conn:
+        version_actual = MigrationContext.configure(conn).get_current_heads()
+    if version_actual:
+        return   # ya sellada (nueva o migrada antes) -- nada que hacer
+
+    if "auditoria_ia" in inspect(_engine).get_table_names():
+        logger = logging.getLogger(__name__)
+        logger.warning(
+            "Alembic: DB legada sin sellar detectada (tablas existen, "
+            "alembic_version ausente) — sellando baseline %s antes de migrar",
+            _REVISION_BASELINE,
+        )
+        command.stamp(cfg, _REVISION_BASELINE)
+
+
 def _aplicar_migraciones(db_url_efectiva: str) -> None:
     """
     Corre `alembic upgrade head` contra el motor activo (ADR-0013): el
@@ -413,6 +456,7 @@ def _aplicar_migraciones(db_url_efectiva: str) -> None:
         try:
             cfg = Config(str(ini_path))
             cfg.set_main_option("script_location", str(raiz / "migrations"))
+            _sellar_db_legada_si_corresponde(cfg)
             command.upgrade(cfg, "head")
         finally:
             os.environ.pop("AGENTDESK_ALEMBIC_DB_URL", None)

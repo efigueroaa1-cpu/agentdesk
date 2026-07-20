@@ -112,7 +112,12 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # hilos bajo escritura concurrente real; retirado) + PRAGMA busy_timeout
     # subio 601->605 (2026-07-16, ADR-0017): columnas tokens_exactos +
     # costo_usd_estimado en AuditoriaIA (FinOps IA)
-    "core/database.py":                                                  605,
+    # subio 605->649 (2026-07-20): _sellar_db_legada_si_corresponde() -- DBs
+    # creadas antes de Alembic (tablas existen, alembic_version nunca
+    # sellada) degradaban a create_all() de respaldo PARA SIEMPRE, sin
+    # alterar columnas de migraciones posteriores (hallazgo real: el HAT
+    # de memoria fallaba en silencio por columnas faltantes en auditoria_ia)
+    "core/database.py":                                                  649,
     # gate.py mismo: crecio organicamente con cada fase (14 reglas nuevas
     # entre Fase 11 y 16). Se acepta el tamano del propio Guardian en vez
     # de partirlo artificialmente entre fases activas.
@@ -149,7 +154,9 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # orchestrator.py (agentes_prioritarios)
     # subio 1249->1256 (2026-07-20): justificacion del trinquete de
     # orchestrator.py (HATs cableados en realizar_tarea)
-    "scripts/gate.py":                                                  1256,
+    # subio 1256->1261 (2026-07-20): justificacion del trinquete de
+    # database.py (sellado automatico de DBs legadas sin alembic_version)
+    "scripts/gate.py":                                                  1263,
     "dashboard.py":                                                     1257,
     # ui/dashboard subio 1257->1271 (2026-07-19): titulo dinamico del header
     # (_titulo_app: etiqueta [MODBUS] si AGENTDESK_MODBUS_HOST esta definida)
