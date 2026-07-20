@@ -217,7 +217,30 @@ class ModbusTelemetryAdapter(BaseTelemetryAdapter):
                 logger.warning("MODBUS: snapshot de '%s' fallo (%s) — se continua "
                                "con el resto de unidades", unidad, exc)
                 snapshot[unidad] = {"error": str(exc)}
+        self._cerrar_cliente()
         return snapshot
+
+    def _cerrar_cliente(self) -> None:
+        """
+        Cierra el socket TCP tras una lectura puntual (2026-07-20): cada
+        corrida de la Opcion Paralelo instancia un ModbusTelemetryAdapter
+        nuevo (main.py) — sin este cierre, el ModbusTcpClient quedaba
+        abandonado a merced del recolector de basura, acumulando conexiones
+        no cerradas limpiamente. Contra un simulador simple (single-thread,
+        ej. ModbusPal) esa acumulacion termino dejandolo sin responder a
+        NINGUNA peticion nueva ('No response received'), sin importar el
+        cliente que la origine. leer_snapshot() es una foto puntual, no un
+        polling persistente (ver docstring) — no hay razon para mantener
+        el socket vivo entre llamadas.
+        """
+        if self._cliente is None:
+            return
+        try:
+            self._cliente.close()
+        except Exception:
+            pass
+        self._cliente = None
+        self._base_direccion = None
 
     async def _reconectar(self) -> None:
         """Cierra el cliente Modbus roto para forzar una conexión nueva (ADR-0012)."""
