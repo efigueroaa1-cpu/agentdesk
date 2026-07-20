@@ -79,7 +79,11 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # + log DATOS_ENTRADA (tuberia de datos visible en sistema.log)
     # subio 1387->1393 (2026-07-19): ERROR final de schema invalido con
     # los campos que fallaron (antes: None silencioso, indiagnosticable)
-    "core/orchestrator.py":                                             1393,
+    # subio 1393->1425 (2026-07-20): jitter por saturacion persistente de
+    # Groq en ejecutar_todos_paralelo — 2+ agentes seguidos degradados fuera
+    # de Groq (ultimo_proveedor_llm != "groq") espacian la siguiente llamada
+    # 1.5s+jitter antes de seguir la rafaga; exito real en Groq resetea
+    "core/orchestrator.py":                                             1425,
     # tools.py subio 1120->1153 (2026-07-14): evaluador AST que reemplaza eval()
     # subio 1153->1209 (2026-07-15, ADR-0011): tool consultar_a_otro_agente
     # + set_orquestador() (delegacion cognitiva Speak/Listen)
@@ -130,7 +134,10 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # orchestrator.py (ejecutar_todos_paralelo) + esta misma entrada
     # subio 1230->1234 (2026-07-19): idem, log final de schema invalido
     # subio 1234->1239 (2026-07-19): idem, respuesta_mock estructurada
-    "scripts/gate.py":                                                  1239,
+    # subio 1239->1243 (2026-07-20): justificacion del trinquete de
+    # orchestrator.py (jitter por saturacion persistente de Groq) — el
+    # propio comentario suma sus lineas al conteo (trampa recurrente)
+    "scripts/gate.py":                                                  1244,
     "dashboard.py":                                                     1257,
     # ui/dashboard subio 1257->1271 (2026-07-19): titulo dinamico del header
     # (_titulo_app: etiqueta [MODBUS] si AGENTDESK_MODBUS_HOST esta definida)
