@@ -1,0 +1,34 @@
+version: 2
+
+updates:
+  # Backend Python — lockfile en requirements.txt (Soberania de Suministro,
+  # ADR-0026). Dependabot abre PRs contra este archivo; el Quality Gate
+  # (quality_gate.yml) certifica cada bump antes de mergear.
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      security-updates:
+        applies-to: security-updates
+        patterns:
+          - "*"
+    open-pull-requests-limit: 10
+
+  # Frontend React/Vite — lockfile en agentdesk-dashboard/package-lock.json.
+  - package-ecosystem: "npm"
+    directory: "/agentdesk-dashboard"
+    schedule:
+      interval: "weekly"
+    groups:
+      security-updates:
+        applies-to: security-updates
+        patterns:
+          - "*"
+    open-pull-requests-limit: 10
+
+  # Workflows de GitHub Actions — mismo criterio de higiene de suministro.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
