@@ -91,7 +91,12 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # herramientas; el lote batch de la Opcion Paralelo nunca consultaba
     # memoria semantica (Hermes) pese a que config.json ya podia declarar
     # "harnesses": ["memoria"] por agente
-    "core/orchestrator.py":                                             1460,
+    # subio 1460->1471 (2026-07-20): MAX_INTENTOS_OLLAMA=2 -- con Ollama
+    # respondiendo (hasta 300s por llamada) el bucle de auto-correccion se
+    # rinde en 2 intentos en vez de 3, para no exceder timeout_tarea_s
+    # externo a mitad del ultimo intento (hallazgo real: "Gestor Logistico"
+    # quedaba descartado en None sin fallar limpio)
+    "core/orchestrator.py":                                             1471,
     # tools.py subio 1120->1153 (2026-07-14): evaluador AST que reemplaza eval()
     # subio 1153->1209 (2026-07-15, ADR-0011): tool consultar_a_otro_agente
     # + set_orquestador() (delegacion cognitiva Speak/Listen)
@@ -156,7 +161,9 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # orchestrator.py (HATs cableados en realizar_tarea)
     # subio 1256->1261 (2026-07-20): justificacion del trinquete de
     # database.py (sellado automatico de DBs legadas sin alembic_version)
-    "scripts/gate.py":                                                  1263,
+    # subio 1263->1268 (2026-07-20): justificacion del trinquete de
+    # orchestrator.py (MAX_INTENTOS_OLLAMA)
+    "scripts/gate.py":                                                  1272,
     "dashboard.py":                                                     1257,
     # ui/dashboard subio 1257->1271 (2026-07-19): titulo dinamico del header
     # (_titulo_app: etiqueta [MODBUS] si AGENTDESK_MODBUS_HOST esta definida)
