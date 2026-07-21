@@ -8,6 +8,7 @@ uvicorn>=0.49
 starlette>=1.3
 pydantic>=2.13
 httpx>=0.28
+python-multipart>=0.0.20   # FastAPI UploadFile/File() (agentes_router, sistema_router, backup) -- requerido en import, no opcional
 
 # â”€â”€ Persistencia (ADR-0005: modo dual; ADR-0013: migraciones reproducibles) â”€
 SQLAlchemy>=2.0.51
