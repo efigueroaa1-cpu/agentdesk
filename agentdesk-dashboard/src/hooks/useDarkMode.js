@@ -19,5 +19,5 @@ export function useDarkMode() {
     localStorage.setItem("agentdesk-theme", isDark ? "dark" : "light");
   }, [isDark]);
 
-  return { isDark, toggle: () => setIsDark(v => !v) };
+  return { isDark, toggle: () => setIsDark((v) => !v) };
 }

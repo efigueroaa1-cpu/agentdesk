@@ -17,17 +17,27 @@ export const useAppStore = create((set, get) => ({
         const data = await res.json();
         set({ sistemaKpis: data });
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   },
 
   agregarAlerta: (alerta) =>
-    set(s => ({
-      alertas: [{ ...alerta, id: Date.now(), leida: false, ts: new Date().toISOString() }, ...s.alertas].slice(0, 100),
+    set((s) => ({
+      alertas: [
+        {
+          ...alerta,
+          id: Date.now(),
+          leida: false,
+          ts: new Date().toISOString(),
+        },
+        ...s.alertas,
+      ].slice(0, 100),
     })),
 
   marcarLeidas: () =>
-    set(s => ({ alertas: s.alertas.map(a => ({ ...a, leida: true })) })),
+    set((s) => ({ alertas: s.alertas.map((a) => ({ ...a, leida: true })) })),
 }));
 
 export const useAlertasSinLeer = () =>
-  useAppStore(s => s.alertas.filter(a => !a.leida).length);
+  useAppStore((s) => s.alertas.filter((a) => !a.leida).length);
