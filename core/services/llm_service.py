@@ -90,12 +90,19 @@ FALLOS_PARA_ABRIR = 2      # fallos consecutivos que abren el circuito
 # Latencia máxima por proveedor (2026-07-20): Ollama corre en hardware local
 # del usuario, sin costo por token ni cuota externa que proteger -- a
 # diferencia de un proveedor cloud colgado (donde 30s sin respuesta es señal
-# real de falla), la inferencia CPU/GPU local bajo carga concurrente puede
-# tardar legítimamente más sin estar "caída". Verificado en vivo: 3 agentes
-# ICI concurrentes contra Ollama excedieron 30s y abrieron el circuito,
-# cayendo los 22 agentes a Mock pese a que Ollama respondía. Los proveedores
-# cloud (Groq/Gemini/OpenAI) NO cambian: un cuelgue ahí sí debe cortarse rápido.
-LATENCIA_MAX_POR_PROVEEDOR: dict[str, float] = {"ollama": 60.0}
+# real de falla), la inferencia local puede tardar legítimamente más sin
+# estar "caída". Verdad técnica cazada en el camino: NO es un problema de
+# concurrencia -- probado con max_agentes_paralelo=1 (cero contención) y
+# el timeout de 120s IGUAL no alcanzó. Causa real medida directamente: el
+# prompt_base completo de un experto ICI real (4629 caracteres, template
+# profesional NIIF/APICS/PMI) tarda 211.9s de punta a punta en este
+# hardware sin GPU -- mi primera medición de 30.1s uso un prompt de prueba
+# simplificado, no representativo. 300s (5 min) deja margen real sobre el
+# dato medido. Los proveedores cloud (Groq/Gemini/OpenAI) NO cambian: un
+# cuelgue ahí sí debe cortarse rápido -- 300s solo tiene sentido para
+# inferencia local sin costo, aceptado como tradeoff consciente (Ollama es
+# una red de seguridad real pero lenta, no un reemplazo de velocidad cloud).
+LATENCIA_MAX_POR_PROVEEDOR: dict[str, float] = {"ollama": 300.0}
 
 
 @dataclass

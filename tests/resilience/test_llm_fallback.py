@@ -285,9 +285,12 @@ class TestLatenciaPorProveedorOllama(unittest.TestCase):
         self.assertNotEqual(r["proveedor"], "groq",
                             "groq no tiene override -- sigue respetando el limite global")
 
-    def test_23_default_de_produccion_es_60s_para_ollama(self):
+    def test_23_default_de_produccion_es_300s_para_ollama(self):
+        """300s (5 min): margen real sobre los 211.9s medidos end-to-end con
+        el prompt_base completo de un experto ICI (no un prompt de prueba
+        simplificado -- verdad tecnica cazada en el camino)."""
         from core.services.llm_service import LATENCIA_MAX_POR_PROVEEDOR
-        self.assertEqual(LATENCIA_MAX_POR_PROVEEDOR.get("ollama"), 60.0)
+        self.assertEqual(LATENCIA_MAX_POR_PROVEEDOR.get("ollama"), 300.0)
 
 
 class TestMockReporteEstructurado(unittest.TestCase):
