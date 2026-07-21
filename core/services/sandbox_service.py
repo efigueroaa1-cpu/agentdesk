@@ -175,8 +175,28 @@ class DockerRunner:
 
     @staticmethod
     def disponible() -> bool:
+        """
+        Verifica que Docker sirva contenedores LINUX, no solo que el binario
+        exista en PATH (2026-07-21, hallazgo real en CI): el runner
+        windows-latest de GitHub Actions trae el CLI de Docker pero en modo
+        Windows containers -- shutil.which('docker') da True, pero
+        'docker run python:3.13-slim' (imagen Linux) falla en vez de
+        degradar con gracia. `docker version --format {{.Server.Os}}`
+        confirma el modo real del daemon; cualquier fallo (binario ausente,
+        daemon caido, timeout) degrada a no-disponible, nunca crashea.
+        """
         import shutil
-        return shutil.which("docker") is not None
+        import subprocess
+        if shutil.which("docker") is None:
+            return False
+        try:
+            r = subprocess.run(
+                ["docker", "version", "--format", "{{.Server.Os}}"],
+                capture_output=True, text=True, timeout=5,
+            )
+            return r.returncode == 0 and r.stdout.strip().lower() == "linux"
+        except Exception:
+            return False
 
     async def ejecutar(self, comando: list[str]) -> ResultadoSandbox:
         if isinstance(comando, (str, bytes)):

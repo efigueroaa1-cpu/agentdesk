@@ -11,14 +11,54 @@ el gate en un entorno sin Docker.
 Correr:  python -m unittest tests.sandbox.test_docker_runner -v
 """
 import asyncio
+import subprocess
 import sys
 import unittest
+from unittest.mock import patch, MagicMock
 
 from core.services.sandbox_service import DockerRunner
 
 
 def _run(coro):
     return asyncio.run(asyncio.wait_for(coro, timeout=90))
+
+
+class TestDockerRunnerDisponibleModoContenedor(unittest.TestCase):
+    """disponible() debe verificar que el DAEMON sirve contenedores Linux, no
+    solo que el binario 'docker' este en PATH (2026-07-21, hallazgo real en
+    CI): el runner windows-latest de GitHub Actions trae el CLI de Docker
+    pero en modo Windows containers -- shutil.which('docker') da True, y
+    'python:3.13-slim' (imagen Linux) fallaba en vez de saltarse con gracia.
+    """
+
+    @patch("shutil.which", return_value=r"C:\Program Files\Docker\docker.exe")
+    @patch("subprocess.run")
+    def test_01_daemon_en_modo_linux_disponible(self, m_run, _m_which):
+        m_run.return_value = MagicMock(returncode=0, stdout="linux\n")
+        self.assertTrue(DockerRunner.disponible())
+
+    @patch("shutil.which", return_value=r"C:\Program Files\Docker\docker.exe")
+    @patch("subprocess.run")
+    def test_02_daemon_en_modo_windows_no_disponible(self, m_run, _m_which):
+        """El caso real de GitHub Actions windows-latest."""
+        m_run.return_value = MagicMock(returncode=0, stdout="windows\n")
+        self.assertFalse(DockerRunner.disponible())
+
+    @patch("shutil.which", return_value=None)
+    def test_03_binario_ausente_no_disponible(self, _m_which):
+        self.assertFalse(DockerRunner.disponible())
+
+    @patch("shutil.which", return_value=r"C:\Program Files\Docker\docker.exe")
+    @patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="docker", timeout=5))
+    def test_04_daemon_no_responde_no_disponible(self, _m_run, _m_which):
+        """CLI presente pero el daemon no arranco/no responde -- nunca crashea."""
+        self.assertFalse(DockerRunner.disponible())
+
+    @patch("shutil.which", return_value=r"C:\Program Files\Docker\docker.exe")
+    @patch("subprocess.run")
+    def test_05_comando_falla_no_disponible(self, m_run, _m_which):
+        m_run.return_value = MagicMock(returncode=1, stdout="")
+        self.assertFalse(DockerRunner.disponible())
 
 
 class TestDockerRunnerValidaciones(unittest.TestCase):
