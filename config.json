@@ -496,7 +496,7 @@
   "orquestador": {
     "modelo_default": "groq:llama-3.3-70b-versatile",
     "max_agentes_paralelo": 2,
-    "timeout_tarea_s": 330,
+    "timeout_tarea_s": 650,
     "agentes_prioritarios": [
       "agente_contabilidad_01",
       "agente_scm_01",

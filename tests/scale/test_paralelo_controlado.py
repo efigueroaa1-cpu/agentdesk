@@ -312,6 +312,58 @@ class TestDistribucionDatos(unittest.TestCase):
         self.assertIn("tabla", finales[0],
                       "el log debe nombrar el campo que fallo")
 
+    def test_07_ollama_se_capa_a_2_intentos_no_3(self):
+        """Hallazgo real (2026-07-20, corrida en vivo): con Ollama como
+        proveedor real (hasta 300s por llamada), 3 intentos completos podian
+        exceder timeout_tarea_s externo antes de que el 2do/3er intento
+        siquiera terminara -- 'Gestor Logistico' quedo descartado por
+        timeout a mitad del intento 2. Con Ollama, el bucle debe rendirse
+        en 2 intentos (no 3) para dejarle margen real al timeout externo."""
+        llamadas = {"n": 0}
+
+        async def _generar_ollama_json_invalido(prompt, temperatura=0.4,
+                                                 prioridad=2, modelo_preferido=None):
+            llamadas["n"] += 1
+            return {"texto": "esto no es JSON valido en absoluto",
+                    "proveedor": "ollama", "modelo": "ollama:llama3.2",
+                    "intentos": ["ollama:ok"], "degradado": False,
+                    "tokens_entrada": 1, "tokens_salida": 1, "tokens_total": 2,
+                    "tokens_exactos": False}
+
+        agente = AgentBase(dict(self._CFG), None, "models/gemini-2.5-flash")
+        with patch("core.services.llm_service.llm_service.generar",
+                   side_effect=_generar_ollama_json_invalido):
+            with self.assertLogs("core.orchestrator", level="ERROR") as capturado:
+                resultado = asyncio.run(agente.realizar_tarea("reporte_ventas"))
+
+        self.assertIsNone(resultado)
+        self.assertEqual(llamadas["n"], 2,
+                         "con Ollama respondiendo, debe rendirse tras 2 intentos, no 3")
+        finales = [l for l in capturado.output if "JSON" in l or "json" in l.lower()]
+        self.assertTrue(any("2 intentos" in l for l in finales),
+                        "el log final debe reflejar el limite REAL usado (2), no 3")
+
+    def test_08_proveedor_rapido_conserva_los_3_intentos(self):
+        """Regresion: proveedores rapidos (groq/gemini/mock) NO deben verse
+        afectados por el limite reducido de Ollama."""
+        llamadas = {"n": 0}
+
+        async def _generar_groq_json_invalido(prompt, temperatura=0.4,
+                                              prioridad=2, modelo_preferido=None):
+            llamadas["n"] += 1
+            return {"texto": "no es JSON", "proveedor": "groq",
+                    "modelo": "groq:llama-3.3-70b-versatile", "intentos": ["groq:ok"],
+                    "degradado": False, "tokens_entrada": 1, "tokens_salida": 1,
+                    "tokens_total": 2, "tokens_exactos": False}
+
+        agente = AgentBase(dict(self._CFG), None, "models/gemini-2.5-flash")
+        with patch("core.services.llm_service.llm_service.generar",
+                   side_effect=_generar_groq_json_invalido):
+            asyncio.run(agente.realizar_tarea("reporte_ventas"))
+
+        self.assertEqual(llamadas["n"], 3,
+                         "groq (rapido) debe conservar los 3 intentos de siempre")
+
 
 if __name__ == "__main__":
     unittest.main()
