@@ -1,0 +1,10 @@
+# Normaliza los finales de linea a LF en el working tree de CUALQUIER
+# maquina/runner, sin importar su core.autocrlf local (2026-07-21).
+#
+# Causa raiz real: los blobs del repo ya eran LF puros, pero el checkout
+# de GitHub Actions (windows-latest, core.autocrlf=true por defecto en el
+# runner) convertia LF->CRLF al clonar -- Prettier (endOfLine: "lf") lo
+# marcaba como error de lint. Nunca se detecto en local porque los fixes
+# se aplicaron editando el working tree en el sitio, sin pasar por un
+# checkout real (que es el unico paso que dispara la conversion).
+* text=auto eol=lf
