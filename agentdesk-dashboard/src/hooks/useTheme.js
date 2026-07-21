@@ -1,11 +1,11 @@
 import { useState, useEffect } from "react";
 
-const CYBERPUNK  = "cyberpunk";
-const CORPORATE  = "corporate";
+const CYBERPUNK = "cyberpunk";
+const CORPORATE = "corporate";
 
 export function useTheme() {
   const [theme, setTheme] = useState(
-    () => localStorage.getItem("agentdesk-ui-theme") ?? CYBERPUNK
+    () => localStorage.getItem("agentdesk-ui-theme") ?? CYBERPUNK,
   );
 
   const isCyberpunk = theme === CYBERPUNK;
@@ -20,7 +20,8 @@ export function useTheme() {
     localStorage.setItem("agentdesk-ui-theme", theme);
   }, [theme, isCyberpunk]);
 
-  const toggle = () => setTheme(t => t === CYBERPUNK ? CORPORATE : CYBERPUNK);
+  const toggle = () =>
+    setTheme((t) => (t === CYBERPUNK ? CORPORATE : CYBERPUNK));
 
   return { theme, toggle, isCyberpunk };
 }

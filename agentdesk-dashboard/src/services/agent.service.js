@@ -13,12 +13,12 @@
 // Use 127.0.0.1 explicitly — on Windows, "localhost" can resolve to ::1 (IPv6)
 // which fails when the Python backend only listens on 127.0.0.1 (IPv4).
 export const API_BASE = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:8000";
-const WS_URL          = API_BASE.replace(/^http/, "ws") + "/ws/telemetria";
+const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/telemetria";
 
 // Tauri v2 injects __TAURI_INTERNALS__ (not __TAURI__ which requires withGlobalTauri).
-const IS_TAURI = typeof window !== "undefined" && (
-  "__TAURI_INTERNALS__" in window || "__TAURI__" in window
-);
+const IS_TAURI =
+  typeof window !== "undefined" &&
+  ("__TAURI_INTERNALS__" in window || "__TAURI__" in window);
 
 // ── Importación lazy de Tauri ──────────────────────────────────────────────────
 let _invoke = null;
@@ -26,7 +26,7 @@ let _listen = null;
 
 async function getTauriApis() {
   if (!IS_TAURI || _invoke) return;
-  const core  = await import("@tauri-apps/api/core");
+  const core = await import("@tauri-apps/api/core");
   const event = await import("@tauri-apps/api/event");
   _invoke = core.invoke;
   _listen = event.listen;
@@ -48,7 +48,10 @@ async function mockInvoke(cmd, args) {
     _mockRunning.add(args.id);
     return null;
   }
-  if (cmd === "stop_agent") { _mockRunning.delete(args.id); return null; }
+  if (cmd === "stop_agent") {
+    _mockRunning.delete(args.id);
+    return null;
+  }
   throw `Mock: comando desconocido '${cmd}'`;
 }
 
@@ -61,7 +64,7 @@ async function apiFetch(path, options = {}) {
   const token = _getToken();
   const headers = {
     "Content-Type": "application/json",
-    ...(token ? { "Authorization": `Bearer ${token}` } : {}),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
     ...(options.headers || {}),
   };
   const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
@@ -73,8 +76,8 @@ async function apiFetch(path, options = {}) {
 }
 
 // ── WebSocket singleton ────────────────────────────────────────────────────────
-let _ws        = null;
-let _wsHandlers = [];   // lista de callbacks suscritos
+let _ws = null;
+let _wsHandlers = []; // lista de callbacks suscritos
 
 function _wsUrl() {
   // Incluir JWT como query param: el browser WebSocket API no admite headers.
@@ -84,7 +87,7 @@ function _wsUrl() {
 }
 
 function ensureWS() {
-  if (_ws && _ws.readyState < 2) return;   // OPEN o CONNECTING
+  if (_ws && _ws.readyState < 2) return; // OPEN o CONNECTING
 
   _ws = new WebSocket(_wsUrl());
 
@@ -92,7 +95,9 @@ function ensureWS() {
     try {
       const msg = JSON.parse(e.data);
       _wsHandlers.forEach((fn) => fn(msg));
-    } catch { /* ignorar mensajes malformados */ }
+    } catch {
+      /* ignorar mensajes malformados */
+    }
   };
 
   _ws.onclose = () => {
@@ -109,9 +114,8 @@ function ensureWS() {
 
 // ── API pública ────────────────────────────────────────────────────────────────
 export const AgentService = {
-
   // ── Tauri: ejecutar / detener proceso Python ───────────────────────────────
-  run:  (id) => tauriInvoke("run_agent",  { id }),
+  run: (id) => tauriInvoke("run_agent", { id }),
   stop: (id) => tauriInvoke("stop_agent", { id }),
 
   // ── FastAPI REST ───────────────────────────────────────────────────────────
@@ -125,18 +129,23 @@ export const AgentService = {
 
   /** Actualiza parámetros de un agente existente */
   update: (agentId, payload) =>
-    apiFetch(`/agentes/${agentId}`, { method: "PUT", body: JSON.stringify(payload) }),
+    apiFetch(`/agentes/${agentId}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
 
   /** Elimina un agente del sistema */
-  delete: (agentId) =>
-    apiFetch(`/agentes/${agentId}`, { method: "DELETE" }),
+  delete: (agentId) => apiFetch(`/agentes/${agentId}`, { method: "DELETE" }),
 
   /** Lista los modelos Gemini disponibles */
   getModelos: () => apiFetch("/modelos"),
 
   /** Ejecuta realizar_tarea() en un agente y devuelve el reporte */
   ejecutar: (agentId, tarea = "reporte_ventas") =>
-    apiFetch(`/agentes/${agentId}/ejecutar`, { method: "POST", body: JSON.stringify({ tarea }) }),
+    apiFetch(`/agentes/${agentId}/ejecutar`, {
+      method: "POST",
+      body: JSON.stringify({ tarea }),
+    }),
 
   /** Verifica que el servidor FastAPI esté activo */
   health: () => apiFetch("/health"),
@@ -167,17 +176,20 @@ export const AgentService = {
   // ── Tauri: eventos de proceso (run/stop streaming) ─────────────────────────
   onLog: async (handler) => {
     await getTauriApis();
-    if (IS_TAURI && _listen) return _listen("agent_log", (e) => handler(e.payload));
+    if (IS_TAURI && _listen)
+      return _listen("agent_log", (e) => handler(e.payload));
     return () => {};
   },
   onStarted: async (handler) => {
     await getTauriApis();
-    if (IS_TAURI && _listen) return _listen("agent_started", (e) => handler(e.payload));
+    if (IS_TAURI && _listen)
+      return _listen("agent_started", (e) => handler(e.payload));
     return () => {};
   },
   onStopped: async (handler) => {
     await getTauriApis();
-    if (IS_TAURI && _listen) return _listen("agent_stopped", (e) => handler(e.payload));
+    if (IS_TAURI && _listen)
+      return _listen("agent_stopped", (e) => handler(e.payload));
     return () => {};
   },
 
@@ -186,31 +198,39 @@ export const AgentService = {
   // set up internally). This prevents "unsubHW is not a function" errors
   // when callers don't await the return value.
   onHardwareMetrics: (handler) => {
-    let iv       = null;
+    let iv = null;
     let unlisten = null;
     let cancelled = false;
 
-    getTauriApis().then(() => {
-      if (cancelled) return;
-      if (IS_TAURI && _listen) {
-        _listen("hardware_metrics", (e) => handler(e.payload))
-          .then(u => { unlisten = u; })
-          .catch(() => {});
-      } else {
-        iv = setInterval(() => handler({
-          cpu_pct:      Math.round(20 + Math.random() * 60),
-          ram_used_mb:  Math.round(1024 + Math.random() * 2048),
-          ram_total_mb: 8192,
-          ram_pct:      Math.round(30 + Math.random() * 40),
-        }), 2000);
-      }
-    }).catch(() => {});
+    getTauriApis()
+      .then(() => {
+        if (cancelled) return;
+        if (IS_TAURI && _listen) {
+          _listen("hardware_metrics", (e) => handler(e.payload))
+            .then((u) => {
+              unlisten = u;
+            })
+            .catch(() => {});
+        } else {
+          iv = setInterval(
+            () =>
+              handler({
+                cpu_pct: Math.round(20 + Math.random() * 60),
+                ram_used_mb: Math.round(1024 + Math.random() * 2048),
+                ram_total_mb: 8192,
+                ram_pct: Math.round(30 + Math.random() * 40),
+              }),
+            2000,
+          );
+        }
+      })
+      .catch(() => {});
 
     // Sync cleanup — always a function, never a Promise
     return () => {
       cancelled = true;
       if (unlisten) unlisten();
-      if (iv)       clearInterval(iv);
+      if (iv) clearInterval(iv);
     };
   },
 
@@ -220,13 +240,19 @@ export const AgentService = {
     if (!IS_TAURI || !_invoke) return;
     try {
       await _invoke("plugin:notification|notify", { options: { title, body } });
-    } catch { /* sin permisos o plugin no disponible */ }
+    } catch {
+      /* sin permisos o plugin no disponible */
+    }
   },
 
   // ── Usuarios (Tauri invoke -> Rust lib.rs) ─────────────────────────────────
-  loginUser:      (username, password)              => tauriInvoke("login_user",      { username, password }),
-  listUsers:      (callerRole)                      => tauriInvoke("list_users",      { callerRole }),
-  createUser:     (username, password, role, callerRole) => tauriInvoke("create_user", { username, password, role, callerRole }),
-  changePassword: (username, oldPassword, newPassword)   => tauriInvoke("change_password", { username, oldPassword, newPassword }),
-  deleteUser:     (username, callerRole)            => tauriInvoke("delete_user",     { username, callerRole }),
+  loginUser: (username, password) =>
+    tauriInvoke("login_user", { username, password }),
+  listUsers: (callerRole) => tauriInvoke("list_users", { callerRole }),
+  createUser: (username, password, role, callerRole) =>
+    tauriInvoke("create_user", { username, password, role, callerRole }),
+  changePassword: (username, oldPassword, newPassword) =>
+    tauriInvoke("change_password", { username, oldPassword, newPassword }),
+  deleteUser: (username, callerRole) =>
+    tauriInvoke("delete_user", { username, callerRole }),
 };
