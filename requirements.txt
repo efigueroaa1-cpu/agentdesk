@@ -48,11 +48,6 @@ click-plugins==1.1.1.2
     # via celery
 click-repl==0.3.0
     # via celery
-colorama==0.4.6
-    # via
-    #   bandit
-    #   click
-    #   tqdm
 cryptography==49.0.0
     # via
     #   -r requirements.in
@@ -75,9 +70,9 @@ fonttools==4.63.0
     # via fpdf2
 fpdf2==2.8.7
     # via -r requirements.in
-google-auth==2.55.2
+google-auth[requests]==2.56.1
     # via google-genai
-google-genai==2.12.1
+google-genai==2.13.0
     # via -r requirements.in
 greenlet==3.5.3
     # via sqlalchemy
@@ -222,9 +217,7 @@ typing-inspection==0.4.2
     #   fastapi
     #   pydantic
 tzdata==2026.3
-    # via
-    #   kombu
-    #   tzlocal
+    # via kombu
 tzlocal==5.4.4
     # via celery
 urllib3==2.7.0

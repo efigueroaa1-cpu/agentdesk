@@ -1,4 +1,4 @@
-﻿# AgentDesk â€” dependencias Python (Fase 7, higiene de dependencias)
+# AgentDesk â€” dependencias Python (Fase 7, higiene de dependencias)
 # Instalar:        pip install -r requirements.in (fuente) -> pip-compile -> requirements.txt (lockfile)
 # Nota: PyInstaller empaqueta esto en el build de escritorio (build_all.ps1).
 
@@ -19,7 +19,7 @@ PyJWT>=2.13
 cryptography>=49.0
 
 # â”€â”€ Proveedores LLM â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-google-genai>=2.9
+google-genai>=2.13.0
 openai>=2.44
 anthropic>=0.112
 groq>=1.5
