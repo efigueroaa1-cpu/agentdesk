@@ -365,5 +365,80 @@ class TestDistribucionDatos(unittest.TestCase):
                          "groq (rapido) debe conservar los 3 intentos de siempre")
 
 
+class _AgenteFakeAuditado:
+    """Doble de AgentBase con los canales laterales que _auditar_batch lee
+    (modelo, ultimo_proveedor_llm, ultimo_tokens_llm) -- espejo de
+    _AgenteFakeConProveedor pero para la suite de auditoria."""
+
+    def __init__(self, nombre, resultado=None, tardanza_s=0.0, revienta=False):
+        self.nombre = nombre
+        self.modelo = "groq:llama-3.3-70b-versatile"
+        self.ultimo_proveedor_llm = "groq"
+        self.ultimo_tokens_llm = {"tokens_total": 42, "tokens_exactos": True}
+        self._resultado = resultado if resultado is not None else {"resumen": f"ok-{nombre}"}
+        self._tardanza = tardanza_s
+        self._revienta = revienta
+
+    async def realizar_tarea(self, tarea, _datos_override=None):
+        if self._tardanza:
+            await asyncio.sleep(self._tardanza)
+        if self._revienta:
+            raise RuntimeError("proveedor cayo a mitad de la tarea")
+        return self._resultado
+
+
+class TestAuditoriaBatch(unittest.TestCase):
+    """Opcion 23 (ejecutar_todos_paralelo) debe dejar rastro forense en
+    auditoria_ia igual que el chat y la ejecucion individual via HTTP
+    (orchestrator_service._auditar) -- hallazgo real: realizar_tarea() en
+    el lote NUNCA llamaba a audit_service, asi que las 22 ejecuciones del
+    batch eran invisibles para el Panel de Auditoria."""
+
+    def test_15_cada_agente_exitoso_deja_una_traza_tarea_batch(self):
+        agentes = {aid: _AgenteFakeAuditado(aid) for aid in ["a1", "a2", "a3"]}
+        orq = _orquestador_con(agentes, {"max_agentes_paralelo": 4, "timeout_tarea_s": 5})
+
+        with patch("core.services.audit_service.registrar_interaccion") as m_aud:
+            resultados = asyncio.run(orq.ejecutar_todos_paralelo("reporte_ventas"))
+
+        self.assertEqual(len(resultados), 3)
+        self.assertEqual(m_aud.call_count, 3)
+        ids_auditados = {c.kwargs["agente_id"] for c in m_aud.call_args_list}
+        self.assertEqual(ids_auditados, {"a1", "a2", "a3"})
+        for c in m_aud.call_args_list:
+            self.assertEqual(c.kwargs["tipo"], "tarea_batch")
+            self.assertTrue(c.kwargs["exitoso"])
+            self.assertEqual(c.kwargs["proveedor"], "groq")
+
+    def test_16_timeout_se_audita_como_fallo_no_se_omite(self):
+        agentes = {
+            "lento": _AgenteFakeAuditado("lento", tardanza_s=5.0),
+            "sano":  _AgenteFakeAuditado("sano", tardanza_s=0.0),
+        }
+        orq = _orquestador_con(agentes, {"max_agentes_paralelo": 4, "timeout_tarea_s": 0.2})
+
+        with patch("core.services.audit_service.registrar_interaccion") as m_aud:
+            asyncio.run(orq.ejecutar_todos_paralelo("reporte_ventas"))
+
+        self.assertEqual(m_aud.call_count, 2, "el timeout tambien debe dejar rastro")
+        por_id = {c.kwargs["agente_id"]: c.kwargs for c in m_aud.call_args_list}
+        self.assertFalse(por_id["lento"]["exitoso"])
+        self.assertIn("timeout", por_id["lento"]["veredicto_guardrail"])
+        self.assertTrue(por_id["sano"]["exitoso"])
+
+    def test_17_auditoria_es_best_effort_no_rompe_el_lote(self):
+        """Si audit_service falla (ej. SQLite ocupado), el resultado de
+        negocio del agente debe sobrevivir igual -- mismo criterio que
+        orchestrator_service._auditar ('traza forense best-effort')."""
+        agentes = {"a1": _AgenteFakeAuditado("a1")}
+        orq = _orquestador_con(agentes, {"max_agentes_paralelo": 4, "timeout_tarea_s": 5})
+
+        with patch("core.services.audit_service.registrar_interaccion",
+                   side_effect=RuntimeError("DB ocupada")):
+            resultados = asyncio.run(orq.ejecutar_todos_paralelo("reporte_ventas"))
+
+        self.assertEqual(resultados, [{"resumen": "ok-a1"}])
+
+
 if __name__ == "__main__":
     unittest.main()

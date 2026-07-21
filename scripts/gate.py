@@ -96,7 +96,12 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # rinde en 2 intentos en vez de 3, para no exceder timeout_tarea_s
     # externo a mitad del ultimo intento (hallazgo real: "Gestor Logistico"
     # quedaba descartado en None sin fallar limpio)
-    "core/orchestrator.py":                                             1471,
+    # subio 1471->1514 (2026-07-21): _auditar_batch() cableado en
+    # ejecutar_todos_paralelo/_uno -- la Opcion 23 nunca llamaba a
+    # audit_service (a diferencia del chat y de ejecutar_tarea via HTTP);
+    # las 22 ejecuciones del batch eran invisibles para el Panel de
+    # Auditoria. tipo="tarea_batch", best-effort (nunca rompe el lote)
+    "core/orchestrator.py":                                             1514,
     # tools.py subio 1120->1153 (2026-07-14): evaluador AST que reemplaza eval()
     # subio 1153->1209 (2026-07-15, ADR-0011): tool consultar_a_otro_agente
     # + set_orquestador() (delegacion cognitiva Speak/Listen)
@@ -163,7 +168,9 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # database.py (sellado automatico de DBs legadas sin alembic_version)
     # subio 1263->1268 (2026-07-20): justificacion del trinquete de
     # orchestrator.py (MAX_INTENTOS_OLLAMA)
-    "scripts/gate.py":                                                  1272,
+    # subio 1272->1279 (2026-07-21): justificacion del trinquete de
+    # orchestrator.py (_auditar_batch)
+    "scripts/gate.py":                                                  1279,
     "dashboard.py":                                                     1257,
     # ui/dashboard subio 1257->1271 (2026-07-19): titulo dinamico del header
     # (_titulo_app: etiqueta [MODBUS] si AGENTDESK_MODBUS_HOST esta definida)

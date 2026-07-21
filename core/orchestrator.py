@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import random
+import time
 from google import genai
 
 from pydantic import ValidationError
@@ -1154,7 +1155,7 @@ class Orquestador:
         JITTER_BASE_S          = 1.5
         _saturacion_groq       = {"consecutivos": 0}
 
-        async def _uno(agente) -> dict | None:
+        async def _uno(aid: str, agente) -> dict | None:
             async with semaforo:
                 if _saturacion_groq["consecutivos"] >= UMBRAL_429_PERSISTENTE:
                     espera = JITTER_BASE_S + random.uniform(0, 0.5)
@@ -1165,6 +1166,7 @@ class Orquestador:
                         extra={"agente": agente.nombre},
                     )
                     await asyncio.sleep(espera)
+                _t0 = time.monotonic()
                 try:
                     resultado = await asyncio.wait_for(
                         agente.realizar_tarea(tarea, _datos_override=datos_override),
@@ -1176,6 +1178,8 @@ class Orquestador:
                         agente.nombre, timeout_s,
                         extra={"agente": agente.nombre},
                     )
+                    self._auditar_batch(aid, agente, None, time.monotonic() - _t0,
+                                        veredicto="timeout_paralelo")
                     return None
 
                 modelo_preferido = getattr(agente, "modelo", "") or ""
@@ -1185,6 +1189,7 @@ class Orquestador:
                 else:
                     _saturacion_groq["consecutivos"] = 0
 
+                self._auditar_batch(aid, agente, resultado, time.monotonic() - _t0)
                 return resultado
 
         logger.info(
@@ -1195,9 +1200,47 @@ class Orquestador:
         # Las tareas se CREAN (y por tanto compiten por el semaforo, en
         # orden FIFO) segun orden_despacho; se recolectan segun
         # ids_originales para que el orden de retorno no cambie.
-        tareas = {aid: asyncio.create_task(_uno(self.agentes[aid]))
+        tareas = {aid: asyncio.create_task(_uno(aid, self.agentes[aid]))
                  for aid in orden_despacho}
         return await asyncio.gather(*[tareas[aid] for aid in ids_originales])
+
+    @staticmethod
+    def _auditar_batch(agente_id: str, agente, resultado: dict | None,
+                       duracion_s: float, veredicto: str | None = None) -> None:
+        """
+        Traza forense best-effort para la Opcion Paralelo (2026-07-21):
+        antes de esto, realizar_tarea() en el lote batch (a diferencia del
+        chat y de orchestrator_service.ejecutar_tarea, la ejecucion
+        individual via HTTP) nunca llamaba a audit_service — las 22
+        ejecuciones de cada corrida eran invisibles para el Panel de
+        Auditoria. tipo="tarea_batch" las distingue de "tarea" (individual
+        via HTTP) sin romper los consumidores existentes que filtran por
+        agente_id/user_id. Nunca debe romper el lote: mismo criterio que
+        orchestrator_service._auditar.
+        """
+        if veredicto is None:
+            api_error = isinstance(resultado, dict) and resultado.get("_api_error")
+            veredicto = "aprobado" if resultado and not api_error else (
+                "error_api" if api_error else "abortado_guardrails")
+        try:
+            from core.services.audit_service import registrar_interaccion
+            registrar_interaccion(
+                tipo="tarea_batch",
+                agente_id=agente_id,
+                prompt="reporte_ventas",
+                respuesta=(resultado or {}).get("resumen", "") if isinstance(resultado, dict) else "",
+                user_id="sistema_batch",
+                contexto="opcion_paralelo",
+                modelo=getattr(agente, "modelo", "") or "",
+                proveedor=getattr(agente, "ultimo_proveedor_llm", "") or "",
+                tokens_reales=getattr(agente, "ultimo_tokens_llm", None),
+                veredicto_guardrail=veredicto,
+                duracion_s=round(duracion_s, 3),
+                exitoso=bool(resultado) and not (isinstance(resultado, dict) and resultado.get("_api_error")),
+            )
+        except Exception:
+            logger.warning("PARALELO: no se pudo registrar auditoria de '%s' (best-effort)",
+                           agente_id, extra={"agente": agente_id})
 
     # ── Recarga dinámica ───────────────────────────────────────────────────────
 
