@@ -12,40 +12,6 @@ on:
     branches: [main]
 
 jobs:
-  backend:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-          cache: pip
-
-      # Soberania de suministro: SOLO el lockfile (versiones exactas).
-      - name: Instalar dependencias desde el lockfile
-        run: python -m pip install -r requirements.txt
-
-      - name: "Gate 1/4 — etiquetas TODO/FIXME/PATCH + residuos + seguridad"
-        shell: pwsh
-        run: .\gate.ps1
-
-      - name: Suite completa de tests
-        run: python -m unittest discover -s tests -t . -p "test_*.py" -v
-
-      - name: Generar QA Scorecard
-        if: always()
-        run: python scripts/qa_scorecard.py --salida qa_scorecard.json
-
-      - name: Publicar QA Scorecard
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: qa-scorecard
-          path: |
-            qa_scorecard.json
-            qa_scorecard.md
-
   frontend:
     runs-on: windows-latest
     defaults:
@@ -89,3 +55,60 @@ jobs:
               Write-Error "Bundle inicial $total KB >= 500 KB — presupuesto excedido."
               exit 1
           }
+
+      # Puente de Artefactos: el backend necesita react_dist/ para que las
+      # suites tests/e2e y tests/integration (check [ONBOARDING]/[INTEGRACION]
+      # de scripts/gate.py) puedan servir /ui/ y devolver 200 en vez de 404 —
+      # sin esto, el Guardian de Arquitectura SIEMPRE bloqueaba el gate en un
+      # checkout limpio (nunca se detecto porque gate.ps1 local corre sobre un
+      # working copy que ya tiene react_dist/ de un build anterior).
+      - name: Publicar el build como artefacto (puente hacia el job backend)
+        uses: actions/upload-artifact@v4
+        with:
+          name: react-dist-build
+          path: agentdesk-dashboard/dist
+          retention-days: 1
+
+  backend:
+    needs: frontend
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      # Soberania de suministro: SOLO el lockfile (versiones exactas).
+      - name: Instalar dependencias desde el lockfile
+        run: python -m pip install -r requirements.txt
+
+      # Descarga el build del job frontend a react_dist/ en la raiz del repo
+      # -- misma ruta que resource_path("react_dist") espera en desarrollo
+      # (core/path_manager.py) y que build_all.ps1 usa localmente.
+      - name: Descargar el build del frontend (puente de artefactos)
+        uses: actions/download-artifact@v4
+        with:
+          name: react-dist-build
+          path: react_dist
+
+      - name: "Gate 1/4 — etiquetas TODO/FIXME/PATCH + residuos + seguridad"
+        shell: pwsh
+        run: .\gate.ps1
+
+      - name: Suite completa de tests
+        run: python -m unittest discover -s tests -t . -p "test_*.py" -v
+
+      - name: Generar QA Scorecard
+        if: always()
+        run: python scripts/qa_scorecard.py --salida qa_scorecard.json
+
+      - name: Publicar QA Scorecard
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-scorecard
+          path: |
+            qa_scorecard.json
+            qa_scorecard.md
