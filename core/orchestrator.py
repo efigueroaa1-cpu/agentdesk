@@ -872,8 +872,17 @@ class AgentBase:
         instruccion = f"{instruccion}{harness_ctx}"
 
         # ── Bucle de auto-corrección: hasta 3 intentos ────────────────────────
+        # Ollama (2026-07-20, hallazgo real en vivo): hasta 300s POR LLAMADA
+        # (LATENCIA_MAX_POR_PROVEEDOR, llm_service.py) -- 3 intentos completos
+        # pueden exceder timeout_tarea_s externo antes de que el 2do/3er
+        # intento termine ("Gestor Logistico" quedo descartado por timeout a
+        # mitad del intento 2). Con Ollama respondiendo, el bucle se rinde en
+        # MAX_INTENTOS_OLLAMA intentos para dejarle margen real al timeout
+        # externo, en vez de agotar 3 intentos completos casi seguro.
         instruccion_actual = instruccion
-        MAX_INTENTOS = 3
+        MAX_INTENTOS        = 3
+        MAX_INTENTOS_OLLAMA = 2
+        limite_intentos      = MAX_INTENTOS   # se ajusta tras la 1ra respuesta real
 
         for intento in range(1, MAX_INTENTOS + 1):
             # Llamar al modelo de IA -- via la cadena de resiliencia (Fase
@@ -893,6 +902,8 @@ class AgentBase:
 
             respuesta_raw = resultado_llm["texto"]
             self.ultimo_proveedor_llm = resultado_llm["proveedor"]
+            if self.ultimo_proveedor_llm == "ollama":
+                limite_intentos = min(limite_intentos, MAX_INTENTOS_OLLAMA)
             self.ultimo_tokens_llm    = {
                 "tokens_entrada": resultado_llm.get("tokens_entrada"),
                 "tokens_salida":  resultado_llm.get("tokens_salida"),
@@ -906,15 +917,15 @@ class AgentBase:
             try:
                 raw = json.loads(texto_limpio)
             except json.JSONDecodeError as e:
-                if intento < MAX_INTENTOS:
+                if intento < limite_intentos:
                     logger.warning("Agente '%s' intento %d: JSON inválido, reintentando", self.nombre, intento)
                     instruccion_actual = (
-                        instruccion + f"\n\nCORRECCIÓN NECESARIA (intento {intento}/{MAX_INTENTOS}): "
+                        instruccion + f"\n\nCORRECCIÓN NECESARIA (intento {intento}/{limite_intentos}): "
                         f"Tu respuesta anterior no era JSON válido: {e}. "
                         "Responde ÚNICAMENTE con JSON válido, sin texto adicional."
                     )
                     continue
-                logger.error("Agente '%s' — JSON inválido tras %d intentos", self.nombre, MAX_INTENTOS,
+                logger.error("Agente '%s' — JSON inválido tras %d intentos", self.nombre, limite_intentos,
                              extra={"agente": self.nombre, "error_type": "json_decode"})
                 return None
 
@@ -922,11 +933,11 @@ class AgentBase:
             try:
                 reporte = ReporteAgente.model_validate(raw)
             except ValidationError as e:
-                if intento < MAX_INTENTOS:
+                if intento < limite_intentos:
                     logger.warning("Agente '%s' intento %d: schema inválido, corrigiendo", self.nombre, intento)
                     campos_faltantes = [err["loc"][0] for err in e.errors() if err.get("loc")]
                     instruccion_actual = (
-                        instruccion + f"\n\nCORRECCIÓN (intento {intento}/{MAX_INTENTOS}): "
+                        instruccion + f"\n\nCORRECCIÓN (intento {intento}/{limite_intentos}): "
                         f"El JSON no cumple el schema requerido. Campos con error: {campos_faltantes}. "
                         "Asegúrate de incluir: resumen (string), kpis (dict no vacío), "
                         "tabla (lista con encabezados), evidencia (dict con fuentes)."
@@ -935,7 +946,7 @@ class AgentBase:
                 campos_finales = [str(err.get("loc", "?")) for err in e.errors()]
                 logger.error(
                     "Agente '%s' — schema inválido tras %d intentos. Campos: %s",
-                    self.nombre, MAX_INTENTOS, campos_finales,
+                    self.nombre, limite_intentos, campos_finales,
                     extra={"agente": self.nombre, "error_type": "schema_validation"},
                 )
                 return None
@@ -952,12 +963,12 @@ class AgentBase:
                 guardrail = resultado.get("_guardrail", "Pipeline")
                 razon     = resultado.get("_razon", "Error de validación")
 
-                if intento < MAX_INTENTOS:
+                if intento < limite_intentos:
                     logger.warning("Agente '%s' intento %d: %s rechazó — autocorrigiendo",
                                    self.nombre, intento, guardrail,
                                    extra={"agente": self.nombre, "guardrail": guardrail})
                     instruccion_actual = (
-                        instruccion + f"\n\nCORRECCIÓN AUTOMÁTICA (intento {intento}/{MAX_INTENTOS}): "
+                        instruccion + f"\n\nCORRECCIÓN AUTOMÁTICA (intento {intento}/{limite_intentos}): "
                         f"El guardrail '{guardrail}' rechazó tu respuesta.\n"
                         f"Razón exacta: {razon}\n"
                         "Corrige estos problemas específicos y genera una nueva respuesta JSON."
@@ -965,7 +976,7 @@ class AgentBase:
                     continue
                 else:
                     logger.error("Agente '%s' — pipeline abortó tras %d intentos de corrección",
-                                 self.nombre, MAX_INTENTOS,
+                                 self.nombre, limite_intentos,
                                  extra={"agente": self.nombre, "error_type": "pipeline_abort",
                                         "status": "abortado", "motivo": razon})
                     return None
