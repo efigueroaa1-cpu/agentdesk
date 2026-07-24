@@ -12,16 +12,26 @@
  *   → Python CREAR_AGENTE → WS emite "agente_creado" → lista actualizada sin reload
  */
 
-import { useState, useEffect, useMemo, useRef, Suspense, lazy } from "react";
-import { Activity, Play, Square, Plus, RefreshCw, Wifi, WifiOff, ServerCrash, Terminal } from "lucide-react";
-import AgentMetrics    from "./AgentMetrics";
-import AgentConsole    from "./AgentConsole";
-import NewAgentModal   from "./NewAgentModal";
-import ErrorBoundary   from "../ui/ErrorBoundary";
+import { useState, useEffect, useMemo, Suspense, lazy } from "react";
+import {
+  Activity,
+  Play,
+  Square,
+  Plus,
+  RefreshCw,
+  Wifi,
+  WifiOff,
+  ServerCrash,
+  Terminal,
+} from "lucide-react";
+import AgentMetrics from "./AgentMetrics";
+import AgentConsole from "./AgentConsole";
+import NewAgentModal from "./NewAgentModal";
+import ErrorBoundary from "../ui/ErrorBoundary";
 import { AgentService, API_BASE } from "../../services/agent.service";
 
 // Lazy-load Three.js and react-simple-maps to avoid init crash in production bundle
-const AgentMap        = lazy(() => import("./AgentMap"));
+const AgentMap = lazy(() => import("./AgentMap"));
 const EmbeddingView3D = lazy(() => import("./EmbeddingView3D"));
 
 // ── Constantes ────────────────────────────────────────────────────────────────
@@ -29,69 +39,155 @@ const MAX_LOGS_PER_AGENT = 500;
 
 // ── Colores y estilos por área ────────────────────────────────────────────────
 const AREA_CONFIG = {
-  Finanzas:   { color: "text-neon-blue",   bg: "bg-neon-blue/10",   border: "border-neon-blue/30"   },
-  General:    { color: "text-purple-400",  bg: "bg-purple-400/10",  border: "border-purple-400/30"  },
-  Mecanica:   { color: "text-neon-green",  bg: "bg-neon-green/10",  border: "border-neon-green/30"  },
-  Rrhh:       { color: "text-yellow-400",  bg: "bg-yellow-400/10",  border: "border-yellow-400/30"  },
-  Marketing:  { color: "text-red-400",     bg: "bg-red-400/10",     border: "border-red-400/30"     },
-  Logistica:  { color: "text-emerald-400", bg: "bg-emerald-400/10", border: "border-emerald-400/30" },
-  Legal:      { color: "text-orange-400",  bg: "bg-orange-400/10",  border: "border-orange-400/30"  },
-  Tecnologia: { color: "text-cyan-400",    bg: "bg-cyan-400/10",    border: "border-cyan-400/30"    },
+  Finanzas: {
+    color: "text-neon-blue",
+    bg: "bg-neon-blue/10",
+    border: "border-neon-blue/30",
+  },
+  General: {
+    color: "text-purple-400",
+    bg: "bg-purple-400/10",
+    border: "border-purple-400/30",
+  },
+  Mecanica: {
+    color: "text-neon-green",
+    bg: "bg-neon-green/10",
+    border: "border-neon-green/30",
+  },
+  Rrhh: {
+    color: "text-yellow-400",
+    bg: "bg-yellow-400/10",
+    border: "border-yellow-400/30",
+  },
+  Marketing: {
+    color: "text-red-400",
+    bg: "bg-red-400/10",
+    border: "border-red-400/30",
+  },
+  Logistica: {
+    color: "text-emerald-400",
+    bg: "bg-emerald-400/10",
+    border: "border-emerald-400/30",
+  },
+  Legal: {
+    color: "text-orange-400",
+    bg: "bg-orange-400/10",
+    border: "border-orange-400/30",
+  },
+  Tecnologia: {
+    color: "text-cyan-400",
+    bg: "bg-cyan-400/10",
+    border: "border-cyan-400/30",
+  },
 };
 
 function areaStyle(area) {
   const key = area?.charAt(0).toUpperCase() + area?.slice(1).toLowerCase();
-  return AREA_CONFIG[key] ?? { color:"text-gray-400", bg:"bg-gray-400/10", border:"border-gray-400/30" };
+  return (
+    AREA_CONFIG[key] ?? {
+      color: "text-gray-400",
+      bg: "bg-gray-400/10",
+      border: "border-gray-400/30",
+    }
+  );
 }
 
 const STATUS_DOT = {
   running: "bg-neon-green animate-pulse",
-  idle:    "bg-yellow-400",
+  idle: "bg-yellow-400",
   stopped: "bg-gray-600",
-  error:   "bg-red-500",
+  error: "bg-red-500",
 };
 
 // Agentes mock para cuando la API no está disponible
 const FALLBACK_AGENTS = [
-  { id:"agente_bd_01",       nombre:"Analista de Datos",    area:"General",  status:"stopped", lat:19.4,  lng:-99.1  },
-  { id:"agente_finanzas_01", nombre:"Estratega Financiero", area:"Finanzas", status:"stopped", lat:40.7,  lng:-74.0  },
-  { id:"agente_test_fire",   nombre:"Test Fire Agent",      area:"General",  status:"idle",    lat:25.0,  lng:-100.0 },
+  {
+    id: "agente_bd_01",
+    nombre: "Analista de Datos",
+    area: "General",
+    status: "stopped",
+    lat: 19.4,
+    lng: -99.1,
+  },
+  {
+    id: "agente_finanzas_01",
+    nombre: "Estratega Financiero",
+    area: "Finanzas",
+    status: "stopped",
+    lat: 40.7,
+    lng: -74.0,
+  },
+  {
+    id: "agente_test_fire",
+    nombre: "Test Fire Agent",
+    area: "General",
+    status: "idle",
+    lat: 25.0,
+    lng: -100.0,
+  },
 ];
 
 // ── Helper: agrega entrada de log con límite de líneas ────────────────────────
 function appendLog(prev, agentId, entry) {
   const existing = prev[agentId] ?? [];
-  const trimmed  = existing.length >= MAX_LOGS_PER_AGENT
-    ? existing.slice(-(MAX_LOGS_PER_AGENT - 1))
-    : existing;
-  return { ...prev, [agentId]: [...trimmed, { ...entry, ts: entry.ts ?? Date.now() }] };
+  const trimmed =
+    existing.length >= MAX_LOGS_PER_AGENT
+      ? existing.slice(-(MAX_LOGS_PER_AGENT - 1))
+      : existing;
+  return {
+    ...prev,
+    [agentId]: [...trimmed, { ...entry, ts: entry.ts ?? Date.now() }],
+  };
 }
 
 // ── AgentCard ─────────────────────────────────────────────────────────────────
-function AgentCard({ agent, selected, logCount, onSelect, onStart, onStop, cmdLoading }) {
-  const style   = areaStyle(agent.area);
-  const active  = agent.status === "running";
+function AgentCard({
+  agent,
+  selected,
+  logCount,
+  onSelect,
+  onStart,
+  onStop,
+  cmdLoading,
+}) {
+  const style = areaStyle(agent.area);
+  const active = agent.status === "running";
   const loading = cmdLoading === agent.id;
 
   return (
     <div
+      role="button"
+      tabIndex={0}
       onClick={() => onSelect(agent.id)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onSelect(agent.id);
+        }
+      }}
       className={`bg-cyber-800 rounded-xl border p-4 flex flex-col gap-3
                   hover:bg-cyber-700/60 transition-all duration-200 cursor-pointer
-                  ${selected
-                    ? `${style.border} ring-1 ring-offset-0 ring-neon-blue/60`
-                    : style.border
+                  ${
+                    selected
+                      ? `${style.border} ring-1 ring-offset-0 ring-neon-blue/60`
+                      : style.border
                   }`}
     >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <p className="text-sm font-semibold text-white truncate">{agent.nombre}</p>
+          <p className="text-sm font-semibold text-white truncate">
+            {agent.nombre}
+          </p>
           <p className="text-xs text-gray-700 mt-0.5 truncate">{agent.id}</p>
         </div>
         <div className="flex flex-col items-end gap-1 shrink-0">
           <div className="flex items-center gap-1.5">
-            <span className={`w-2 h-2 rounded-full ${STATUS_DOT[agent.status] ?? "bg-gray-600"}`} />
-            <span className="text-xs text-gray-600 capitalize">{agent.status}</span>
+            <span
+              className={`w-2 h-2 rounded-full ${STATUS_DOT[agent.status] ?? "bg-gray-600"}`}
+            />
+            <span className="text-xs text-gray-600 capitalize">
+              {agent.status}
+            </span>
           </div>
           {logCount > 0 && (
             <div className="flex items-center gap-1 text-gray-700">
@@ -103,7 +199,9 @@ function AgentCard({ agent, selected, logCount, onSelect, onStart, onStop, cmdLo
       </div>
 
       {/* Badge de área */}
-      <span className={`self-start px-2 py-0.5 rounded-lg text-xs font-medium ${style.color} ${style.bg}`}>
+      <span
+        className={`self-start px-2 py-0.5 rounded-lg text-xs font-medium ${style.color} ${style.bg}`}
+      >
         {agent.area}
       </span>
 
@@ -116,21 +214,35 @@ function AgentCard({ agent, selected, logCount, onSelect, onStart, onStop, cmdLo
 
       {/* Botón iniciar/detener — stopPropagation para no activar onSelect */}
       <button
-        onClick={(e) => { e.stopPropagation(); active ? onStop(agent.id) : onStart(agent.id); }}
+        onClick={(e) => {
+          e.stopPropagation();
+          active ? onStop(agent.id) : onStart(agent.id);
+        }}
         disabled={loading}
         className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium
                     rounded-lg transition-colors w-full justify-center disabled:opacity-50
-                    ${active
-                      ? "bg-red-900/40 hover:bg-red-900/70 text-red-400"
-                      : "bg-neon-green/10 hover:bg-neon-green/20 text-neon-green border border-neon-green/20"
+                    ${
+                      active
+                        ? "bg-red-900/40 hover:bg-red-900/70 text-red-400"
+                        : "bg-neon-green/10 hover:bg-neon-green/20 text-neon-green border border-neon-green/20"
                     }`}
       >
-        {loading
-          ? <svg className="animate-spin w-3 h-3" viewBox="0 0 24 24" fill="none">
-              <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeDasharray="30 70" />
-            </svg>
-          : active ? <Square size={11} /> : <Play size={11} />
-        }
+        {loading ? (
+          <svg className="animate-spin w-3 h-3" viewBox="0 0 24 24" fill="none">
+            <circle
+              cx="12"
+              cy="12"
+              r="10"
+              stroke="currentColor"
+              strokeWidth="3"
+              strokeDasharray="30 70"
+            />
+          </svg>
+        ) : active ? (
+          <Square size={11} />
+        ) : (
+          <Play size={11} />
+        )}
         {loading ? "..." : active ? "Detener" : "Iniciar"}
       </button>
     </div>
@@ -138,25 +250,42 @@ function AgentCard({ agent, selected, logCount, onSelect, onStart, onStop, cmdLo
 }
 
 // ── AreaGroup ─────────────────────────────────────────────────────────────────
-function AreaGroup({ area, agents, logs, selectedAgent, onSelect, onStart, onStop, cmdLoading }) {
-  const style   = areaStyle(area);
-  const activos = agents.filter(a => a.status === "running").length;
+function AreaGroup({
+  area,
+  agents,
+  logs,
+  selectedAgent,
+  onSelect,
+  onStart,
+  onStop,
+  cmdLoading,
+}) {
+  const style = areaStyle(area);
+  const activos = agents.filter((a) => a.status === "running").length;
   const [open, setOpen] = useState(true);
 
   return (
     <div className="flex flex-col gap-3">
-      <button onClick={() => setOpen(v => !v)}
-              className="flex items-center gap-3 text-left w-full">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-3 text-left w-full"
+      >
         <div className={`h-px flex-1 border-t ${style.border} opacity-40`} />
-        <span className={`text-xs font-bold tracking-widest uppercase ${style.color}`}>{area}</span>
-        <span className="text-xs text-gray-700">{activos}/{agents.length}</span>
+        <span
+          className={`text-xs font-bold tracking-widest uppercase ${style.color}`}
+        >
+          {area}
+        </span>
+        <span className="text-xs text-gray-700">
+          {activos}/{agents.length}
+        </span>
         <div className={`h-px flex-1 border-t ${style.border} opacity-40`} />
         <span className="text-gray-700 text-xs">{open ? "▲" : "▼"}</span>
       </button>
 
       {open && (
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-          {agents.map(agent => (
+          {agents.map((agent) => (
             <AgentCard
               key={agent.id}
               agent={agent}
@@ -176,17 +305,15 @@ function AreaGroup({ area, agents, logs, selectedAgent, onSelect, onStart, onSto
 
 // ── AgentHub principal ────────────────────────────────────────────────────────
 export default function AgentHub() {
-  const [agents,        setAgents]        = useState([]);
-  const [loading,       setLoading]       = useState(true);
-  const [apiDown,       setApiDown]       = useState(false);
-  const [wsOnline,      setWsOnline]      = useState(false);
-  const [cmdLoading,    setCmdLoading]    = useState(null);
-  const [modalOpen,     setModalOpen]     = useState(false);
-  const [toast,         setToast]         = useState(null);
+  const [agents, setAgents] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [apiDown, setApiDown] = useState(false);
+  const [wsOnline, setWsOnline] = useState(false);
+  const [cmdLoading, setCmdLoading] = useState(null);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [toast, setToast] = useState(null);
   const [selectedAgent, setSelectedAgent] = useState(null);
-  const [logs,          setLogs]          = useState({});   // { [agentId]: LogEntry[] }
-
-  const logUnsubRef = useRef(null);
+  const [logs, setLogs] = useState({}); // { [agentId]: LogEntry[] }
 
   // ── Toast temporal ────────────────────────────────────────────────────────
   const showToast = (msg, type = "ok") => {
@@ -216,30 +343,45 @@ export default function AgentHub() {
 
     AgentService.onLog((entry) => {
       if (!alive) return;
-      setLogs(prev => appendLog(prev, entry.id, entry));
-    }).then(unsub => { if (alive) unlisteners.push(unsub); else unsub?.(); });
+      setLogs((prev) => appendLog(prev, entry.id, entry));
+    }).then((unsub) => {
+      if (alive) unlisteners.push(unsub);
+      else unsub?.();
+    });
 
     AgentService.onStarted((e) => {
       if (!alive) return;
-      setLogs(prev => appendLog(prev, e.id, {
-        id: e.id, message: `Agente "${e.id}" iniciado.`, level: "system",
-      }));
-    }).then(unsub => { if (alive) unlisteners.push(unsub); else unsub?.(); });
+      setLogs((prev) =>
+        appendLog(prev, e.id, {
+          id: e.id,
+          message: `Agente "${e.id}" iniciado.`,
+          level: "system",
+        }),
+      );
+    }).then((unsub) => {
+      if (alive) unlisteners.push(unsub);
+      else unsub?.();
+    });
 
     AgentService.onStopped((e) => {
       if (!alive) return;
-      setLogs(prev => appendLog(prev, e.id, {
-        id: e.id,
-        message: e.crash
-          ? `Proceso terminó con error (código ${e.code ?? "?"}).`
-          : `Agente "${e.id}" detenido (código ${e.code ?? 0}).`,
-        level: e.crash ? "error" : "system",
-      }));
-    }).then(unsub => { if (alive) unlisteners.push(unsub); else unsub?.(); });
+      setLogs((prev) =>
+        appendLog(prev, e.id, {
+          id: e.id,
+          message: e.crash
+            ? `Proceso terminó con error (código ${e.code ?? "?"}).`
+            : `Agente "${e.id}" detenido (código ${e.code ?? 0}).`,
+          level: e.crash ? "error" : "system",
+        }),
+      );
+    }).then((unsub) => {
+      if (alive) unlisteners.push(unsub);
+      else unsub?.();
+    });
 
     return () => {
       alive = false;
-      unlisteners.forEach(fn => fn?.());
+      unlisteners.forEach((fn) => fn?.());
     };
   }, []);
 
@@ -254,15 +396,18 @@ export default function AgentHub() {
       }
 
       if (msg.tipo === "agente_creado") {
-        setAgents(prev => {
-          if (prev.some(a => a.nombre === msg.nombre)) return prev;
-          return [...prev, {
-            id:          `agente_${msg.nombre.toLowerCase().replace(/\s+/g, "_")}`,
-            nombre:      msg.nombre,
-            area:        msg.area ?? "General",
-            status:      "stopped",
-            prompt_base: "",
-          }];
+        setAgents((prev) => {
+          if (prev.some((a) => a.nombre === msg.nombre)) return prev;
+          return [
+            ...prev,
+            {
+              id: `agente_${msg.nombre.toLowerCase().replace(/\s+/g, "_")}`,
+              nombre: msg.nombre,
+              area: msg.area ?? "General",
+              status: "stopped",
+              prompt_base: "",
+            },
+          ];
         });
         showToast(`Agente "${msg.nombre}" registrado en el sistema.`);
         return;
@@ -270,25 +415,31 @@ export default function AgentHub() {
 
       // Telemetría de guardrail → log en la consola del agente
       if (msg.tipo === "telemetria" && msg.agente) {
-        const ok      = msg.status === "ok";
-        const durStr  = typeof msg.duracion_s === "number"
-          ? ` (${msg.duracion_s.toFixed(3)}s)` : "";
-        setLogs(prev => appendLog(prev, msg.agente, {
-          id:      msg.agente,
-          message: `[${msg.filtro ?? "pipeline"}] ${msg.status ?? "?"}${durStr}`,
-          level:   ok ? "info" : "error",
-          ts:      Date.now(),
-        }));
+        const ok = msg.status === "ok";
+        const durStr =
+          typeof msg.duracion_s === "number"
+            ? ` (${msg.duracion_s.toFixed(3)}s)`
+            : "";
+        setLogs((prev) =>
+          appendLog(prev, msg.agente, {
+            id: msg.agente,
+            message: `[${msg.filtro ?? "pipeline"}] ${msg.status ?? "?"}${durStr}`,
+            level: ok ? "info" : "error",
+            ts: Date.now(),
+          }),
+        );
       }
 
       // Guardrail abort → log de error + notificación nativa de escritorio
       if (msg.tipo === "pipeline_abortado" && msg.agente) {
-        setLogs(prev => appendLog(prev, msg.agente, {
-          id:      msg.agente,
-          message: `[Guardrail] Pipeline abortado — ${msg.motivo ?? "sin motivo"}`,
-          level:   "error",
-          ts:      Date.now(),
-        }));
+        setLogs((prev) =>
+          appendLog(prev, msg.agente, {
+            id: msg.agente,
+            message: `[Guardrail] Pipeline abortado — ${msg.motivo ?? "sin motivo"}`,
+            level: "error",
+            ts: Date.now(),
+          }),
+        );
         AgentService.sendNotification(
           "AgentDesk — Guardrail activado",
           `Agente: ${msg.agente}\n${msg.motivo ?? "Pipeline abortado tras máximos intentos"}`,
@@ -305,15 +456,21 @@ export default function AgentHub() {
   // ── Comandos run / stop ───────────────────────────────────────────────────
   const handleStart = async (id) => {
     setCmdLoading(id);
-    setSelectedAgent(id);   // auto-seleccionar para ver logs en consola
+    setSelectedAgent(id); // auto-seleccionar para ver logs en consola
     try {
       await AgentService.run(id);
-      setAgents(prev => prev.map(a => a.id === id ? { ...a, status: "running" } : a));
+      setAgents((prev) =>
+        prev.map((a) => (a.id === id ? { ...a, status: "running" } : a)),
+      );
     } catch (e) {
       showToast(String(e), "error");
-      setLogs(prev => appendLog(prev, id, {
-        id, message: String(e), level: "error",
-      }));
+      setLogs((prev) =>
+        appendLog(prev, id, {
+          id,
+          message: String(e),
+          level: "error",
+        }),
+      );
     } finally {
       setCmdLoading(null);
     }
@@ -323,7 +480,9 @@ export default function AgentHub() {
     setCmdLoading(id);
     try {
       await AgentService.stop(id);
-      setAgents(prev => prev.map(a => a.id === id ? { ...a, status: "stopped" } : a));
+      setAgents((prev) =>
+        prev.map((a) => (a.id === id ? { ...a, status: "stopped" } : a)),
+      );
     } catch (e) {
       showToast(String(e), "error");
     } finally {
@@ -334,21 +493,23 @@ export default function AgentHub() {
   // ── Modal: agente creado ──────────────────────────────────────────────────
   const handleCreated = (nuevo) => {
     showToast(`Agente "${nuevo.nombre}" enviado al Orquestador.`);
-    setAgents(prev => {
-      if (prev.some(a => a.nombre === nuevo.nombre)) return prev;
+    setAgents((prev) => {
+      if (prev.some((a) => a.nombre === nuevo.nombre)) return prev;
       return [...prev, { ...nuevo, status: "stopped" }];
     });
   };
 
   // ── Limpiar logs de un agente ─────────────────────────────────────────────
   const clearLogs = (id) => {
-    setLogs(prev => ({ ...prev, [id]: [] }));
+    setLogs((prev) => ({ ...prev, [id]: [] }));
   };
 
   // ── Descargar PDF de reporte ──────────────────────────────────────────────
   const handleDownloadPdf = async (id) => {
     try {
-      const res = await fetch(`${API_BASE}/agentes/${encodeURIComponent(id)}/reporte`);
+      const res = await fetch(
+        `${API_BASE}/agentes/${encodeURIComponent(id)}/reporte`,
+      );
       if (res.status === 404) {
         showToast(
           "Sin reporte PDF para este agente. Ejecuta el pipeline completo primero.",
@@ -358,12 +519,14 @@ export default function AgentHub() {
       }
       if (!res.ok) throw new Error(`Error ${res.status}`);
 
-      const blob     = await res.blob();
-      const blobUrl  = URL.createObjectURL(blob);
-      const filename = res.headers.get("Content-Disposition")?.match(/filename="?([^"]+)"?/)?.[1]
-                    ?? `reporte_${id}.pdf`;
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const filename =
+        res.headers
+          .get("Content-Disposition")
+          ?.match(/filename="?([^"]+)"?/)?.[1] ?? `reporte_${id}.pdf`;
       const a = document.createElement("a");
-      a.href     = blobUrl;
+      a.href = blobUrl;
       a.download = filename;
       a.click();
       URL.revokeObjectURL(blobUrl);
@@ -384,33 +547,39 @@ export default function AgentHub() {
     return Array.from(mapa.entries());
   }, [agents]);
 
-  const totalActivos = agents.filter(a => a.status === "running").length;
+  const totalActivos = agents.filter((a) => a.status === "running").length;
   const selectedLogs = selectedAgent ? (logs[selectedAgent] ?? []) : [];
 
   return (
     <div className="min-h-screen bg-cyber-900 text-gray-100 font-mono flex flex-col">
-
       {/* Header ──────────────────────────────────────────────────────────── */}
-      <header className="flex items-center gap-3 px-6 py-3
-                         border-b border-cyber-600 bg-cyber-800 shrink-0">
+      <header
+        className="flex items-center gap-3 px-6 py-3
+                         border-b border-cyber-600 bg-cyber-800 shrink-0"
+      >
         <div className="w-2 h-2 rounded-full bg-neon-blue animate-pulse" />
         <h1 className="text-sm font-semibold tracking-widest uppercase text-neon-blue">
           Orchestrator Hub
         </h1>
 
         <div className="flex items-center gap-3 ml-auto">
-          <div className={`flex items-center gap-1.5 text-xs ${wsOnline ? "text-neon-green" : "text-gray-600"}`}>
+          <div
+            className={`flex items-center gap-1.5 text-xs ${wsOnline ? "text-neon-green" : "text-gray-600"}`}
+          >
             {wsOnline ? <Wifi size={12} /> : <WifiOff size={12} />}
             {wsOnline ? "WS conectado" : "WS desconectado"}
           </div>
 
           <span className="text-xs text-gray-600">
-            {totalActivos} activo{totalActivos !== 1 ? "s" : ""} / {agents.length}
+            {totalActivos} activo{totalActivos !== 1 ? "s" : ""} /{" "}
+            {agents.length}
           </span>
 
-          <button onClick={cargarAgentes}
-                  className="p-1.5 text-gray-600 hover:text-gray-300
-                             hover:bg-cyber-700 rounded-lg transition-colors">
+          <button
+            onClick={cargarAgentes}
+            className="p-1.5 text-gray-600 hover:text-gray-300
+                             hover:bg-cyber-700 rounded-lg transition-colors"
+          >
             <RefreshCw size={13} />
           </button>
 
@@ -429,28 +598,32 @@ export default function AgentHub() {
 
       {/* Contenido ───────────────────────────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto p-5 flex flex-col gap-6">
-
         {/* Toast */}
         {toast && (
-          <div className={`fixed bottom-6 right-6 z-40 px-4 py-3 rounded-xl text-sm
+          <div
+            className={`fixed bottom-6 right-6 z-40 px-4 py-3 rounded-xl text-sm
                            shadow-xl border transition-all
-                           ${toast.type === "error"
-                             ? "bg-red-900/80 border-red-500/50 text-red-300"
-                             : "bg-neon-blue/10 border-neon-blue/50 text-neon-blue"
-                           }`}>
+                           ${
+                             toast.type === "error"
+                               ? "bg-red-900/80 border-red-500/50 text-red-300"
+                               : "bg-neon-blue/10 border-neon-blue/50 text-neon-blue"
+                           }`}
+          >
             {toast.msg}
           </div>
         )}
 
         {/* Banner API offline */}
         {apiDown && (
-          <div className="flex items-center gap-3 px-4 py-2.5 rounded-xl
-                          bg-yellow-950/60 border border-yellow-500/30 text-yellow-400 text-xs">
+          <div
+            className="flex items-center gap-3 px-4 py-2.5 rounded-xl
+                          bg-yellow-950/60 border border-yellow-500/30 text-yellow-400 text-xs"
+          >
             <ServerCrash size={14} className="shrink-0" />
             <span>
               Servidor Python no disponible en{" "}
-              <code className="text-yellow-300">localhost:8000</code>.
-              Inicia el backend con{" "}
+              <code className="text-yellow-300">localhost:8000</code>. Inicia el
+              backend con{" "}
               <code className="text-yellow-300">python main.py</code>.
             </span>
             <button
@@ -467,17 +640,27 @@ export default function AgentHub() {
         <div className="grid grid-cols-1 xl:grid-cols-5 gap-5">
           <div className="xl:col-span-3">
             <ErrorBoundary>
-              <AgentMap agents={agents.map(a => ({ ...a, lat: a.lat ?? 0, lng: a.lng ?? 0 }))} />
+              <AgentMap
+                agents={agents.map((a) => ({
+                  ...a,
+                  lat: a.lat ?? 0,
+                  lng: a.lng ?? 0,
+                }))}
+              />
             </ErrorBoundary>
           </div>
           <div className="xl:col-span-2">
             <ErrorBoundary>
-              <Suspense fallback={
-                <div className="flex items-center justify-center h-72 bg-cyber-900
-                                rounded-2xl border border-cyber-600 text-gray-600 text-xs">
-                  Cargando visualización 3D...
-                </div>
-              }>
+              <Suspense
+                fallback={
+                  <div
+                    className="flex items-center justify-center h-72 bg-cyber-900
+                                rounded-2xl border border-cyber-600 text-gray-600 text-xs"
+                  >
+                    Cargando visualización 3D...
+                  </div>
+                }
+              >
                 <EmbeddingView3D />
               </Suspense>
             </ErrorBoundary>
@@ -490,8 +673,14 @@ export default function AgentHub() {
             <AgentConsole
               agentId={selectedAgent}
               logs={selectedLogs}
-              onClear={selectedAgent ? () => clearLogs(selectedAgent) : undefined}
-              onDownloadPdf={selectedAgent ? () => handleDownloadPdf(selectedAgent) : undefined}
+              onClear={
+                selectedAgent ? () => clearLogs(selectedAgent) : undefined
+              }
+              onDownloadPdf={
+                selectedAgent
+                  ? () => handleDownloadPdf(selectedAgent)
+                  : undefined
+              }
             />
           </div>
           <div className="lg:col-span-2">
@@ -515,15 +704,25 @@ export default function AgentHub() {
 
           {loading ? (
             <div className="flex items-center gap-3 text-gray-600 text-sm py-8 justify-center">
-              <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
-                <circle cx="12" cy="12" r="10" stroke="currentColor"
-                        strokeWidth="3" strokeDasharray="30 70" />
+              <svg
+                className="animate-spin w-4 h-4"
+                viewBox="0 0 24 24"
+                fill="none"
+              >
+                <circle
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  strokeWidth="3"
+                  strokeDasharray="30 70"
+                />
               </svg>
               Conectando con el Orquestador...
             </div>
           ) : grupos.length === 0 ? (
             <p className="text-gray-700 text-sm text-center py-8">
-              Sin agentes. Crea el primero con "Nuevo Agente".
+              Sin agentes. Crea el primero con &quot;Nuevo Agente&quot;.
             </p>
           ) : (
             grupos.map(([area, areaAgents]) => (

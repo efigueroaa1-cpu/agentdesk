@@ -1,15 +1,15 @@
 import { useEffect, useState } from "react";
-import { AUTH_CONFIG }  from "../../config/auth.config";
-import { useAuth }      from "../../context/AuthContext";
-import Login            from "./Login";
-import AccessDenied     from "./AccessDenied";
+import { AUTH_CONFIG } from "../../config/auth.config";
+import { useAuth } from "../../context/AuthContext";
+import Login from "./Login";
+import AccessDenied from "./AccessDenied";
 
 // Tauri event listener loaded dynamically inside useEffect — no top-level await
 // so Vite can bundle this file without ES2022 top-level-await support.
 
 const BACKEND_URL = "http://localhost:8000/health";
 const POLL_INTERVAL_MS = 1500;
-const POLL_TIMEOUT_MS  = 30_000;   // give backend 30 s before showing error
+const POLL_TIMEOUT_MS = 30_000; // give backend 30 s before showing error
 
 function useSplash() {
   // "connecting" | "ready" | "error" | "skip"
@@ -18,14 +18,16 @@ function useSplash() {
 
   useEffect(() => {
     let cancelled = false;
-    let unlistenReady  = null;
-    let unlistenError  = null;
-    let pollTimer      = null;
-    let deadlineTimer  = null;
+    let unlistenReady = null;
+    let unlistenError = null;
+    let pollTimer = null;
+    let deadlineTimer = null;
 
     async function probe() {
       try {
-        const res = await fetch(BACKEND_URL, { signal: AbortSignal.timeout(2000) });
+        const res = await fetch(BACKEND_URL, {
+          signal: AbortSignal.timeout(2000),
+        });
         if (res.ok && !cancelled) {
           clearTimeout(deadlineTimer);
           clearInterval(pollTimer);
@@ -70,7 +72,7 @@ function useSplash() {
         clearInterval(pollTimer);
         setDetail(
           "Backend did not respond in 30 s. " +
-          "Check that AgentDesk.exe is installed correctly."
+            "Check that AgentDesk.exe is installed correctly.",
         );
         setPhase("error");
       }, POLL_TIMEOUT_MS);
@@ -95,31 +97,49 @@ function Splash({ phase, detail }) {
   const isError = phase === "error";
 
   return (
-    <div style={{
-      minHeight: "100vh",
-      background: "#ffffff",
-      display: "flex",
-      flexDirection: "column",
-      alignItems: "center",
-      justifyContent: "center",
-      gap: "1.5rem",
-      fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-      color: "#1e293b",
-      userSelect: "none",
-    }}>
+    <div
+      style={{
+        minHeight: "100vh",
+        background: "#ffffff",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: "1.5rem",
+        fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+        color: "#1e293b",
+        userSelect: "none",
+      }}
+    >
       {/* Logo mark */}
-      <div style={{
-        width: 64, height: 64,
-        borderRadius: 16,
-        background: "linear-gradient(135deg, #00d4ff 0%, #7c3aed 100%)",
-        display: "flex", alignItems: "center", justifyContent: "center",
-        fontSize: 28, fontWeight: 700, color: "#fff",
-        boxShadow: "0 0 32px rgba(0,212,255,.35)",
-      }}>A</div>
+      <div
+        style={{
+          width: 64,
+          height: 64,
+          borderRadius: 16,
+          background: "linear-gradient(135deg, #00d4ff 0%, #7c3aed 100%)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontSize: 28,
+          fontWeight: 700,
+          color: "#fff",
+          boxShadow: "0 0 32px rgba(0,212,255,.35)",
+        }}
+      >
+        A
+      </div>
 
       {/* App name */}
       <div style={{ textAlign: "center" }}>
-        <div style={{ fontSize: "1.5rem", fontWeight: 700, letterSpacing: ".05em", color: "#00d4ff" }}>
+        <div
+          style={{
+            fontSize: "1.5rem",
+            fontWeight: 700,
+            letterSpacing: ".05em",
+            color: "#00d4ff",
+          }}
+        >
           AgentDesk
         </div>
         <div style={{ fontSize: ".75rem", color: "#475569", marginTop: 4 }}>
@@ -128,37 +148,55 @@ function Splash({ phase, detail }) {
       </div>
 
       {/* Status indicator */}
-      <div style={{
-        display: "flex", flexDirection: "column", alignItems: "center", gap: ".5rem",
-        minHeight: 56,
-      }}>
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          gap: ".5rem",
+          minHeight: 56,
+        }}
+      >
         {!isError && (
           /* Spinner */
-          <div style={{
-            width: 28, height: 28,
-            borderRadius: "50%",
-            border: "3px solid #162454",
-            borderTopColor: "#00d4ff",
-            animation: "spin 0.8s linear infinite",
-          }} />
+          <div
+            style={{
+              width: 28,
+              height: 28,
+              borderRadius: "50%",
+              border: "3px solid #162454",
+              borderTopColor: "#00d4ff",
+              animation: "spin 0.8s linear infinite",
+            }}
+          />
         )}
         {isError && (
           /* Error icon */
-          <div style={{
-            width: 28, height: 28,
-            borderRadius: "50%",
-            background: "#ff2d55",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            fontSize: 16, fontWeight: 700,
-          }}>!</div>
+          <div
+            style={{
+              width: 28,
+              height: 28,
+              borderRadius: "50%",
+              background: "#ff2d55",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: 16,
+              fontWeight: 700,
+            }}
+          >
+            !
+          </div>
         )}
-        <div style={{
-          fontSize: ".7rem",
-          color: isError ? "#dc2626" : "#64748b",
-          maxWidth: 320,
-          textAlign: "center",
-          lineHeight: 1.5,
-        }}>
+        <div
+          style={{
+            fontSize: ".7rem",
+            color: isError ? "#dc2626" : "#64748b",
+            maxWidth: 320,
+            textAlign: "center",
+            lineHeight: 1.5,
+          }}
+        >
           {detail}
         </div>
         {isError && (
