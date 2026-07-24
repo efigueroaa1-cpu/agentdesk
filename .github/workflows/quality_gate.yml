@@ -29,8 +29,12 @@ jobs:
       - name: Instalar dependencias (lockfile npm)
         run: npm ci --legacy-peer-deps
 
+      # --ext explicito: ESLint 8 con un directorio solo analiza .js por
+      # defecto -- sin este flag, los ~60 componentes .jsx del dashboard
+      # quedaban FUERA del lint (hallazgo real 2026-07-24: 1978 problemas
+      # ocultos tras un "verde" que solo cubria 7 archivos .js).
       - name: ESLint
-        run: npx eslint src
+        run: npx eslint src --ext .js,.jsx
 
       - name: Build de produccion
         run: npm run build
