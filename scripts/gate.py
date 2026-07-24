@@ -43,10 +43,20 @@ RE_TAGS = re.compile(r"(#|//|/\*|<!--)\s*(TODO|FIXME|PATCH)\b|\b(TODO|FIXME|PATC
 LEGACY_OVERSIZE: dict[str, int] = {
     "agentdesk-dashboard/src/components/agents/AgentAreaView.jsx":       947,
     "agentdesk-dashboard/src/components/agents/AgentManager.jsx":        753,
-    "agentdesk-dashboard/src/components/chat/ChatPanel.jsx":             684,
-    "agentdesk-dashboard/src/components/hub/AgentHub.jsx":               553,
-    "agentdesk-dashboard/src/components/hub/EmbeddingView3D.jsx":        634,
-    "agentdesk-dashboard/src/components/hub/GanttModule.jsx":            569,
+    # 8 archivos .jsx renormalizados por prettier (2026-07-24): al cerrar el
+    # agujero de cobertura de ESLint (npx eslint src NUNCA linteo los .jsx —
+    # falta de --ext), eslint --fix expandio los objetos de estilo de una
+    # linea a varias. CERO logica nueva — mismo precedente que SecurityPanel
+    # (2026-07-17). Los 4 que estaban bajo 500 entran a la tabla; los 4 que
+    # ya estaban, suben su base. Regla de trinquete intacta: solo bajar.
+    "agentdesk-dashboard/src/components/bi/BIDashboard.jsx":             602,
+    "agentdesk-dashboard/src/components/chat/ChatPanel.jsx":             762,
+    "agentdesk-dashboard/src/components/hub/AgentHub.jsx":               752,
+    "agentdesk-dashboard/src/components/hub/EmbeddingView3D.jsx":       1125,
+    "agentdesk-dashboard/src/components/hub/FinancialModule.jsx":        647,
+    "agentdesk-dashboard/src/components/hub/GanttModule.jsx":            867,
+    "agentdesk-dashboard/src/components/hub/SCurveModule.jsx":           662,
+    "agentdesk-dashboard/src/components/settings/DataProviderPanel.jsx": 516,
     "agentdesk-dashboard/src/components/pipeline/ErrorPanel.jsx":        553,
     "agentdesk-dashboard/src/components/pipeline/PipelineControl.jsx":  1050,
     "agentdesk-dashboard/src/components/proyectos/ProyectosModule.jsx": 1127,
@@ -170,7 +180,9 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # orchestrator.py (MAX_INTENTOS_OLLAMA)
     # subio 1272->1279 (2026-07-21): justificacion del trinquete de
     # orchestrator.py (_auditar_batch)
-    "scripts/gate.py":                                                  1279,
+    # subio 1279->1289 (2026-07-24): 8 entradas .jsx renormalizadas por
+    # prettier (cierre del agujero --ext de ESLint) + esta justificacion
+    "scripts/gate.py":                                                  1289,
     "dashboard.py":                                                     1257,
     # ui/dashboard subio 1257->1271 (2026-07-19): titulo dinamico del header
     # (_titulo_app: etiqueta [MODBUS] si AGENTDESK_MODBUS_HOST esta definida)
