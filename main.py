@@ -235,6 +235,42 @@ async def main() -> None:
                                 extra={"unidades": len(snapshot)},
                             )
 
+                        # Telemetria dual OPC-UA (2026-07-25, cierre ADR-0004):
+                        # si hay endpoint configurado, el snapshot de la planta
+                        # OPC-UA (Prosys) viaja junto al de Modbus. Best-effort:
+                        # un fallo del servidor OPC-UA NO bloquea el lote (el
+                        # adaptador nunca inventa datos — ConnectionError aqui
+                        # significa "sin datos", jamas "datos simulados").
+                        import os as _os
+                        if _os.environ.get("AGENTDESK_OPCUA_ENDPOINT"):
+                            from core.adapters.opcua_adapter import OpcUaTelemetryAdapter
+                            adaptador_ua = OpcUaTelemetryAdapter()
+                            try:
+                                lecturas_ua = {
+                                    e.fuente: {
+                                        "valor":   e.valor,
+                                        "unidad":  e.unidad,
+                                        "nivel":   e.nivel,
+                                        "node_id": e.metadata.get("node_id", ""),
+                                    }
+                                    for s in adaptador_ua.SENSORES
+                                    for e in adaptador_ua.leer(s["id"])
+                                }
+                                datos_paralelo = datos_paralelo or {}
+                                datos_paralelo["telemetria_opcua"] = lecturas_ua
+                                log.info(
+                                    "Telemetria OPC-UA consolidada para el lote",
+                                    extra={"sensores": len(lecturas_ua),
+                                           "protocolo": adaptador_ua.protocolo()},
+                                )
+                            except ConnectionError as exc:
+                                log.warning(
+                                    "OPCUA: sin snapshot para el lote (%s) — "
+                                    "el lote continua solo con Modbus", exc,
+                                )
+                            finally:
+                                adaptador_ua.detener()
+
                         resultados = await app.ejecutar_todos_paralelo(
                             "reporte_ventas", datos_override=datos_paralelo,
                         )
