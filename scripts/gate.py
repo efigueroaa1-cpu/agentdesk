@@ -125,7 +125,9 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # BAJO 1293->991 (2026-07-26, Strangler Fig v1.3 incremento 1/N): TOOLS_SCHEMA
     # (~300 lineas de datos puros) extraido a core/tools_schema.py. Baseline
     # lockeado al nuevo valor -- el trinquete solo permite seguir bajando.
-    "core/tools.py":                                                     991,
+    # BAJO 991->742 (incremento 2/N): finanzas (_npv/_irr/_mirr/
+    # _calcular_financiero) extraidas a core/tools_finance.py.
+    "core/tools.py":                                                     742,
     # web_monitor.py subio 593->595 (2026-07-14): validacion de esquema http(s)
     "core/web_monitor.py":                                               595,
     # database.py subio 495->580 (2026-07-15, ADR-0013): migraciones Alembic
@@ -193,7 +195,8 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # la clave de Tavily hardcodeada) + justificaciones de trinquete
     # subio 1335->1343 (2026-07-26): [CRED] reordenado a primera validacion +
     # justificaciones (Strangler Fig incremento 1 tools.py)
-    "scripts/gate.py":                                                  1343,
+    # subio 1343->1346 (2026-07-26): justificacion incremento 2 (finanzas)
+    "scripts/gate.py":                                                  1346,
     "dashboard.py":                                                     1257,
     # ui/dashboard subio 1257->1271 (2026-07-19): titulo dinamico del header
     # (_titulo_app: etiqueta [MODBUS] si AGENTDESK_MODBUS_HOST esta definida)
