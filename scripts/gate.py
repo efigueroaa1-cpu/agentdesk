@@ -115,8 +115,10 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # 1/N): motor de ejecucion paralela + _auditar_batch extraidos a
     # core/orchestrator_engine.py (OrquestadorEngineMixin).
     # BAJO 1367->1187 (incremento 2/N): CRUD de agentes -> core/
-    # orchestrator_registry.py (OrquestadorRegistryMixin). Baseline lockeado.
-    "core/orchestrator.py":                                             1187,
+    # orchestrator_registry.py (OrquestadorRegistryMixin).
+    # BAJO 1187->1098 (incremento 3/N): CommandBridge -> core/
+    # orchestrator_bridge.py (OrquestadorBridgeMixin). Baseline lockeado.
+    "core/orchestrator.py":                                             1098,
     # core/tools.py RETIRADO de esta lista (2026-07-26, Strangler Fig v1.3
     # incrementos 1-3): bajo de 1293 a 443 (<500) extrayendo schema/finanzas/
     # calculo/datos-Chile a tools_schema.py/tools_finance.py/tools_math.py/
@@ -196,7 +198,8 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # core/tools/ (empaquetado Strangler Fig) + esta justificacion
     # subio 1345->1349 (2026-07-26): justificacion orchestrator incremento 1 (engine)
     # subio 1349->1352 (2026-07-26): justificacion orchestrator incremento 2 (registry)
-    "scripts/gate.py":                                                  1352,
+    # subio 1352->1355 (2026-07-26): justificacion orchestrator incremento 3 (bridge)
+    "scripts/gate.py":                                                  1355,
     "dashboard.py":                                                     1257,
     # ui/dashboard subio 1257->1271 (2026-07-19): titulo dinamico del header
     # (_titulo_app: etiqueta [MODBUS] si AGENTDESK_MODBUS_HOST esta definida)
