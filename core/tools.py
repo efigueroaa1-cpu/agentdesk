@@ -27,9 +27,14 @@ import math
 import operator
 from datetime import datetime
 
+from core.key_vault import obtener_key
+
 logger = logging.getLogger(__name__)
 
-_TAVILY_KEY = "AGENTDESK_TAVILY_KEY_PURGADA"
+# Secreto via el accesor sancionado (vault cifrado -> .env), NUNCA os.environ
+# directo (ADR-0011 [TOOL-SECURITY]: una herramienta no lee el entorno del
+# host) ni hardcodeado. "" si no esta configurada -> degradacion limpia.
+_TAVILY_KEY = obtener_key("AGENTDESK_TAVILY_KEY") or ""
 
 # Referencia al orquestador vivo, inyectada al arrancar la API/CLI (mismo
 # patrón que core/scheduler.py: un global de módulo, sin importar la capa
@@ -1066,6 +1071,9 @@ async def _buscar_empresa_cmf(nombre_empresa: str = "", rut: str = "") -> str:
 async def _buscar_web(query: str, max_resultados: int = 6) -> str:
     """Busca en internet usando Tavily AI Search."""
     import httpx
+    if not _TAVILY_KEY:
+        return ("Busqueda web no disponible: falta AGENTDESK_TAVILY_KEY en el "
+                ".env (la herramienta degrada limpio, no rompe la tarea).")
     try:
         max_resultados = min(max(1, int(max_resultados)), 10)
         async with httpx.AsyncClient(timeout=25) as client:
@@ -1118,7 +1126,10 @@ async def _obtener_pagina(url: str, max_chars: int = 8000) -> str:
     max_chars = min(int(max_chars), 20000)
 
     # ── Intento 1: Tavily Extract (maneja HTML y algunos PDFs) ───────────────
+    # Sin clave, se salta directo al fallback HTTP (degradacion limpia).
     try:
+        if not _TAVILY_KEY:
+            raise RuntimeError("AGENTDESK_TAVILY_KEY no configurada")
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(
                 "https://api.tavily.com/extract",

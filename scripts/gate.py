@@ -119,7 +119,10 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # envolviendo el dispatcher (_despachar_herramienta)
     # subio 1217->1282 (2026-07-17, ADR-0024): herramienta proponer_comando_ot
     # (schema + dispatch + impl — el agente PROPONE, jamas ejecuta)
-    "core/tools.py":                                                    1282,
+    # subio 1282->1293 (2026-07-26): _TAVILY_KEY via obtener_key(vault->.env)
+    # en vez de hardcodeada (ADR-0011 [TOOL-SECURITY]: sin os.environ directo)
+    # + guards de degradacion limpia en _buscar_web/_obtener_pagina
+    "core/tools.py":                                                    1293,
     # web_monitor.py subio 593->595 (2026-07-14): validacion de esquema http(s)
     "core/web_monitor.py":                                               595,
     # database.py subio 495->580 (2026-07-15, ADR-0013): migraciones Alembic
@@ -182,7 +185,10 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # orchestrator.py (_auditar_batch)
     # subio 1279->1289 (2026-07-24): 8 entradas .jsx renormalizadas por
     # prettier (cierre del agujero --ext de ESLint) + esta justificacion
-    "scripts/gate.py":                                                  1289,
+    # subio 1289->1335 (2026-07-26): nueva regla check_secreto_literal +
+    # RE_SECRETO_LITERAL/RE_PRIVATE_KEY (cierra el gap [CRED] que dejo pasar
+    # la clave de Tavily hardcodeada) + justificaciones de trinquete
+    "scripts/gate.py":                                                  1335,
     "dashboard.py":                                                     1257,
     # ui/dashboard subio 1257->1271 (2026-07-19): titulo dinamico del header
     # (_titulo_app: etiqueta [MODBUS] si AGENTDESK_MODBUS_HOST esta definida)
@@ -330,6 +336,45 @@ def check_credenciales_defecto(archivos: list[str]) -> list[str]:
             if RE_CRED_DEFECTO.search(linea):
                 errores.append(f"  [CRED]    {rel}:{n}: {linea.strip()[:80]}  "
                                f"<- credencial por defecto prohibida (ADR-0008)")
+    return errores
+
+
+# Secretos literales hardcodeados (2026-07-26): RE_CRED_DEFECTO solo atrapa
+# VALORES debiles conocidos (changeme/admin/...), no una clave REAL de alta
+# entropia pegada al codigo -- por eso una API key de Tavily
+# (_TAVILY_KEY = "tvly-...") vivio en un repo PUBLICO sin que el gate la viera.
+# Esta regla detecta el VALOR por su prefijo de proveedor, sin depender del
+# nombre de la variable. NUNCA imprime el valor (solo archivo:linea).
+RE_SECRETO_LITERAL = re.compile(
+    r"[\"']("
+    r"tvly-[A-Za-z0-9_-]{20,}"        # Tavily
+    r"|sk-[A-Za-z0-9]{20,}"           # OpenAI / Anthropic
+    r"|AIza[A-Za-z0-9_-]{30,}"        # Google API key
+    r"|gsk_[A-Za-z0-9]{20,}"          # Groq
+    r"|ghp_[A-Za-z0-9]{30,}"          # GitHub PAT
+    r"|xox[baprs]-[A-Za-z0-9-]{10,}"  # Slack
+    r")[\"']"
+)
+RE_PRIVATE_KEY = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")
+
+
+def check_secreto_literal(archivos: list[str]) -> list[str]:
+    """Detecta secretos literales de proveedor pegados al codigo fuente. El
+    .env (gitignored) es el lugar LEGITIMO de los secretos y se excluye."""
+    errores = []
+    for rel in archivos:
+        p = Path(rel)
+        if p.suffix not in {".py", ".js", ".jsx", ".json", ".toml",
+                            ".yml", ".yaml", ".ps1", ".md", ".txt"}:
+            continue
+        if rel in EXCLUIR_TAGS or rel == "scripts/gate.py":
+            continue
+        if p.name.startswith(".env"):
+            continue
+        for n, linea in enumerate(leer(rel), 1):
+            if RE_SECRETO_LITERAL.search(linea) or RE_PRIVATE_KEY.search(linea):
+                errores.append(f"  [CRED]    {rel}:{n}: <- secreto literal hardcodeado "
+                               f"(mover a .env / key_vault, nunca al codigo)")
     return errores
 
 
@@ -1236,6 +1281,7 @@ def main() -> int:
     errores += check_imports(archivos)
     errores += check_ejecucion_peligrosa(archivos)
     errores += check_credenciales_defecto(archivos)
+    errores += check_secreto_literal(archivos)
     errores += check_pesado_sincrono(archivos)
     errores += check_boot_validation()
     errores += check_llm_resilience(archivos)
