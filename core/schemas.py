@@ -4,6 +4,47 @@ from typing import Literal
 from pydantic import BaseModel, field_validator, model_validator
 
 
+def extraer_json_objeto(texto: str) -> str:
+    """
+    Aisla el objeto JSON de una respuesta LLM que puede venir envuelta en
+    fences markdown o en prosa -- comun en modelos locales chicos (Llama 3.2
+    via Ollama) que anteponen "Aqui esta el reporte:" o agregan un cierre
+    conversacional despues del objeto (2026-07-26, Modo Faena: el Contador
+    ICI aborto con 'JSON invalido' porque el parseo solo quitaba fences).
+
+    Devuelve el substring desde el primer '{' hasta la '}' que lo balancea
+    (ignorando llaves dentro de strings JSON). Si no hay llaves, devuelve el
+    texto sin fences -- json.loads dara el error real, no uno enmascarado.
+    """
+    limpio = texto.replace("```json", "").replace("```", "").strip()
+    inicio = limpio.find("{")
+    if inicio == -1:
+        return limpio
+    profundidad = 0
+    en_cadena = False
+    escapado = False
+    for i in range(inicio, len(limpio)):
+        c = limpio[i]
+        if escapado:
+            escapado = False
+            continue
+        if c == "\\":
+            escapado = True
+            continue
+        if c == '"':
+            en_cadena = not en_cadena
+            continue
+        if en_cadena:
+            continue
+        if c == "{":
+            profundidad += 1
+        elif c == "}":
+            profundidad -= 1
+            if profundidad == 0:
+                return limpio[inicio:i + 1]
+    return limpio[inicio:]   # llave sin cerrar: json.loads reporta el error real
+
+
 class ReporteAgente(BaseModel):
     resumen:   str
     kpis:      dict[str, str | int | float]

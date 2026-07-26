@@ -285,12 +285,49 @@ class TestLatenciaPorProveedorOllama(unittest.TestCase):
         self.assertNotEqual(r["proveedor"], "groq",
                             "groq no tiene override -- sigue respetando el limite global")
 
-    def test_23_default_de_produccion_es_300s_para_ollama(self):
-        """300s (5 min): margen real sobre los 211.9s medidos end-to-end con
-        el prompt_base completo de un experto ICI (no un prompt de prueba
-        simplificado -- verdad tecnica cazada en el camino)."""
+    def test_23_default_de_produccion_es_600s_para_ollama(self):
+        """600s (10 min): la corrida offline real (2026-07-26) midio inferencias
+        de Llama 3.2 que excedieron los 300s previos en hardware sin GPU bajo
+        el lote de 22 -- el tope viejo expulsaba a Ollama antes de que pudiera
+        entregar, degradando todo a Mock. 600s da margen sobre el peor caso
+        medido sin volver eterna una llamada realmente colgada."""
         from core.services.llm_service import LATENCIA_MAX_POR_PROVEEDOR
-        self.assertEqual(LATENCIA_MAX_POR_PROVEEDOR.get("ollama"), 300.0)
+        self.assertEqual(LATENCIA_MAX_POR_PROVEEDOR.get("ollama"), 600.0)
+
+
+class TestUmbralFallosPorProveedorOllama(unittest.TestCase):
+    """Ollama local: un fallo aislado (o una latencia alta puntual) no es
+    evidencia de indisponibilidad como si lo es en un proveedor cloud. Su
+    breaker debe tolerar mas fallos consecutivos antes de abrir (2026-07-26:
+    la corrida offline abrio el circuito de Ollama al 2do fallo de latencia y
+    los 22 agentes cayeron a Mock -- 'Soberania de Inteligencia local' ficticia,
+    ningun reporte real de Ollama)."""
+
+    _CADENA = [("ollama", "ollama:llama3.2"), ("mock", "mock:agentdesk-demo")]
+
+    def test_24_ollama_tolera_mas_fallos_antes_de_abrir(self):
+        gen = _generador_con_fallos(fallan={"ollama"})
+        svc = LlmService(generador=gen, cadena=self._CADENA,
+                         fallos_por_proveedor={"ollama": 5})
+        for _ in range(4):
+            _run(svc.generar("x"))
+        self.assertTrue(svc.estado_circuitos()["ollama"]["activo"],
+                        "tras 4 fallos (<5) el circuito de ollama sigue cerrado")
+        _run(svc.generar("x"))   # fallo 5
+        self.assertFalse(svc.estado_circuitos()["ollama"]["activo"],
+                         "al 5to fallo consecutivo el circuito de ollama abre")
+
+    def test_25_sin_override_usa_el_umbral_global(self):
+        gen = _generador_con_fallos(fallan={"groq"})
+        svc = LlmService(generador=gen, fallos_por_proveedor={})
+        _run(svc.generar("x"))
+        _run(svc.generar("x"))   # 2 fallos = umbral global por defecto
+        self.assertFalse(svc.estado_circuitos()["groq"]["activo"],
+                         "sin override, groq respeta el umbral global (2)")
+
+    def test_26_default_de_produccion_ollama_5_fallos(self):
+        from core.services.llm_service import FALLOS_PARA_ABRIR_POR_PROVEEDOR
+        self.assertEqual(FALLOS_PARA_ABRIR_POR_PROVEEDOR.get("ollama"), 5)
 
 
 class TestMockReporteEstructurado(unittest.TestCase):

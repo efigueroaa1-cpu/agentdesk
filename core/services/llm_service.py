@@ -102,7 +102,18 @@ FALLOS_PARA_ABRIR = 2      # fallos consecutivos que abren el circuito
 # cuelgue ahí sí debe cortarse rápido -- 300s solo tiene sentido para
 # inferencia local sin costo, aceptado como tradeoff consciente (Ollama es
 # una red de seguridad real pero lenta, no un reemplazo de velocidad cloud).
-LATENCIA_MAX_POR_PROVEEDOR: dict[str, float] = {"ollama": 300.0}
+# 2026-07-26: subido 300->600 tras la corrida offline real (Modo Faena) --
+# las inferencias de Llama 3.2 bajo el lote de 22 excedieron los 300s en
+# hardware sin GPU, el circuito de Ollama abria y los 22 agentes caian a
+# Mock (Soberania de Inteligencia local ficticia: cero reportes reales).
+LATENCIA_MAX_POR_PROVEEDOR: dict[str, float] = {"ollama": 600.0}
+
+# Umbral de fallos por proveedor (2026-07-26): un fallo aislado de Ollama
+# (o una latencia alta puntual) NO es evidencia de indisponibilidad como si
+# lo es en un proveedor cloud -- es local, sin costo ni cuota. Su breaker
+# tolera mas fallos consecutivos antes de abrir para no expulsarlo del lote
+# offline al primer tropiezo. Los proveedores sin entrada usan FALLOS_PARA_ABRIR.
+FALLOS_PARA_ABRIR_POR_PROVEEDOR: dict[str, int] = {"ollama": 5}
 
 
 @dataclass
@@ -114,6 +125,9 @@ class CircuitBreaker:
     # continua (0.0 = sano). Distinto de abierto_hasta -- ver docstring del
     # módulo. Lo usa alert_service para el SLO de "circuito abierto >5min".
     abierto_desde:        float = 0.0
+    # Umbral de fallos propio (2026-07-26): por defecto el global, pero un
+    # proveedor local lento (Ollama) recibe uno mas permisivo al crearse.
+    umbral_fallos:        int   = FALLOS_PARA_ABRIR
 
     def disponible(self) -> bool:
         """Cerrado, o abierto pero ya en ventana semi-abierta (1 intento)."""
@@ -126,7 +140,7 @@ class CircuitBreaker:
 
     def registrar_fallo(self) -> None:
         self.fallos_consecutivos += 1
-        if self.fallos_consecutivos >= FALLOS_PARA_ABRIR:
+        if self.fallos_consecutivos >= self.umbral_fallos:
             self.abierto_hasta = time.monotonic() + ENFRIAMIENTO_S
             if not self.abierto_desde:   # solo marca el INICIO de la racha
                 self.abierto_desde = time.monotonic()
@@ -145,6 +159,7 @@ class LlmService:
         cadena: list[tuple[str, str]] | None = None,
         latencia_max_s: float = LATENCIA_MAX_S,
         latencia_por_proveedor: dict[str, float] | None = None,
+        fallos_por_proveedor: dict[str, int] | None = None,
     ):
         if generador_con_uso is not None:
             self._generar_con_uso = generador_con_uso
@@ -169,12 +184,23 @@ class LlmService:
             latencia_por_proveedor if latencia_por_proveedor is not None
             else dict(LATENCIA_MAX_POR_PROVEEDOR)
         )
+        self._fallos_por_proveedor = (
+            fallos_por_proveedor if fallos_por_proveedor is not None
+            else dict(FALLOS_PARA_ABRIR_POR_PROVEEDOR)
+        )
         self._circuitos: dict[str, CircuitBreaker] = {
-            proveedor: CircuitBreaker() for proveedor, _ in self._cadena
+            proveedor: self._nuevo_circuito(proveedor) for proveedor, _ in self._cadena
         }
         from collections import deque
         self._latencias: dict[str, deque] = {p: deque(maxlen=20) for p, _ in self._cadena}
         self._ultimo_error: dict[str, str] = {}
+
+    def _nuevo_circuito(self, proveedor: str) -> CircuitBreaker:
+        """Circuito con el umbral de fallos propio del proveedor (Ollama mas
+        permisivo); los no listados usan FALLOS_PARA_ABRIR global."""
+        return CircuitBreaker(
+            umbral_fallos=self._fallos_por_proveedor.get(proveedor, FALLOS_PARA_ABRIR)
+        )
 
     def disponible(self, proveedor: str) -> bool:
         """
@@ -197,7 +223,7 @@ class LlmService:
         """
         if proveedor not in self._circuitos:
             from collections import deque
-            self._circuitos[proveedor] = CircuitBreaker()
+            self._circuitos[proveedor] = self._nuevo_circuito(proveedor)
             self._latencias[proveedor] = deque(maxlen=20)
         self._circuitos[proveedor].registrar_fallo()
         if motivo:
@@ -227,7 +253,7 @@ class LlmService:
         proveedor_pref, _ = parse_model_id(modelo_preferido)
         if proveedor_pref not in self._circuitos:
             from collections import deque
-            self._circuitos[proveedor_pref] = CircuitBreaker()
+            self._circuitos[proveedor_pref] = self._nuevo_circuito(proveedor_pref)
             self._latencias[proveedor_pref] = deque(maxlen=20)
         resto = [(p, m) for p, m in self._cadena if p != proveedor_pref]
         return [(proveedor_pref, modelo_preferido)] + resto

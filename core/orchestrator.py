@@ -8,7 +8,7 @@ from google import genai
 
 from pydantic import ValidationError
 from data.middleware import consultar_datos_seguros
-from core.schemas import ReporteAgente
+from core.schemas import ReporteAgente, extraer_json_objeto
 from core.pipeline import PipelineProcessor
 from core.command_bridge import CommandBridge, Command, RELOAD_CONFIG, CREAR_AGENTE, ELIMINAR_AGENTE, ACTUALIZAR_AGENTE, RELOAD_FINANZAS
 import core.reporter as reporter
@@ -912,7 +912,7 @@ class AgentBase:
                 "tokens_exactos": resultado_llm.get("tokens_exactos", False),
             }
 
-            texto_limpio = respuesta_raw.replace("```json", "").replace("```", "").strip()
+            texto_limpio = extraer_json_objeto(respuesta_raw)   # tolera prosa/fences (Llama 3.2)
 
             # Parsear JSON
             try:
