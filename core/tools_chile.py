@@ -115,10 +115,6 @@ async def _obtener_partidos(consulta: str) -> str:
         return f"Error al obtener datos de fútbol: {e}"
 
 
-# ── Implementaciones nuevas ────────────────────────────────────────────────────
-
-from core.tools_finance import _calcular_financiero  # finanzas extraidas (Strangler Fig v1.3)
-
 async def _consultar_macro_chile(indicadores: list[str] | None = None, historico: bool = False) -> str:
     """Consulta indicadores macroeconómicos de Chile desde mindicador.cl."""
     NOMBRES = {

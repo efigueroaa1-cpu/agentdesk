@@ -213,6 +213,7 @@ async def _leer_archivo(archivo_id: str | None = None, max_chars: int = 8000) ->
 # builtins vacíos (escapable vía atributos), aquí cualquier nodo no listado
 # (atributos, subíndices, lambdas, imports) se rechaza de plano.
 from core.tools_math import _calcular  # calculo extraido (Strangler Fig v1.3)
+from core.tools_finance import _calcular_financiero  # el dispatcher lo llama
 from core.tools_chile import (  # datos externos extraidos (Strangler Fig v1.3)
     _consultar_indicadores_chile, _obtener_energia_chile, _obtener_partidos,
     _consultar_macro_chile, _buscar_empresa_cmf,
