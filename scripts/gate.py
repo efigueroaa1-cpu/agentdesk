@@ -122,7 +122,10 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # subio 1282->1293 (2026-07-26): _TAVILY_KEY via obtener_key(vault->.env)
     # en vez de hardcodeada (ADR-0011 [TOOL-SECURITY]: sin os.environ directo)
     # + guards de degradacion limpia en _buscar_web/_obtener_pagina
-    "core/tools.py":                                                    1293,
+    # BAJO 1293->991 (2026-07-26, Strangler Fig v1.3 incremento 1/N): TOOLS_SCHEMA
+    # (~300 lineas de datos puros) extraido a core/tools_schema.py. Baseline
+    # lockeado al nuevo valor -- el trinquete solo permite seguir bajando.
+    "core/tools.py":                                                     991,
     # web_monitor.py subio 593->595 (2026-07-14): validacion de esquema http(s)
     "core/web_monitor.py":                                               595,
     # database.py subio 495->580 (2026-07-15, ADR-0013): migraciones Alembic
@@ -188,7 +191,9 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # subio 1289->1335 (2026-07-26): nueva regla check_secreto_literal +
     # RE_SECRETO_LITERAL/RE_PRIVATE_KEY (cierra el gap [CRED] que dejo pasar
     # la clave de Tavily hardcodeada) + justificaciones de trinquete
-    "scripts/gate.py":                                                  1335,
+    # subio 1335->1343 (2026-07-26): [CRED] reordenado a primera validacion +
+    # justificaciones (Strangler Fig incremento 1 tools.py)
+    "scripts/gate.py":                                                  1343,
     "dashboard.py":                                                     1257,
     # ui/dashboard subio 1257->1271 (2026-07-19): titulo dinamico del header
     # (_titulo_app: etiqueta [MODBUS] si AGENTDESK_MODBUS_HOST esta definida)
@@ -1276,12 +1281,15 @@ def main() -> int:
     print(f"Guardian de Arquitectura — {len(archivos)} archivos inventariados")
 
     errores = []
+    # [CRED] primero: un secreto hardcodeado es el hallazgo mas grave y debe
+    # verse antes que cualquier otra violacion (2026-07-26, tras el incidente
+    # de la clave Tavily que ninguna regla veia).
+    errores += check_secreto_literal(archivos)
+    errores += check_credenciales_defecto(archivos)
     errores += check_tags(archivos)
     errores += check_tamano(archivos)
     errores += check_imports(archivos)
     errores += check_ejecucion_peligrosa(archivos)
-    errores += check_credenciales_defecto(archivos)
-    errores += check_secreto_literal(archivos)
     errores += check_pesado_sincrono(archivos)
     errores += check_boot_validation()
     errores += check_llm_resilience(archivos)
