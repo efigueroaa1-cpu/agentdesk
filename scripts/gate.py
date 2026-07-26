@@ -113,8 +113,10 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # Auditoria. tipo="tarea_batch", best-effort (nunca rompe el lote)
     # BAJO 1514->1367 (2026-07-26, Strangler Fig v1.3 orchestrator incremento
     # 1/N): motor de ejecucion paralela + _auditar_batch extraidos a
-    # core/orchestrator_engine.py (OrquestadorEngineMixin). Baseline lockeado.
-    "core/orchestrator.py":                                             1367,
+    # core/orchestrator_engine.py (OrquestadorEngineMixin).
+    # BAJO 1367->1187 (incremento 2/N): CRUD de agentes -> core/
+    # orchestrator_registry.py (OrquestadorRegistryMixin). Baseline lockeado.
+    "core/orchestrator.py":                                             1187,
     # core/tools.py RETIRADO de esta lista (2026-07-26, Strangler Fig v1.3
     # incrementos 1-3): bajo de 1293 a 443 (<500) extrayendo schema/finanzas/
     # calculo/datos-Chile a tools_schema.py/tools_finance.py/tools_math.py/
@@ -193,7 +195,8 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # subio 1337->1345 (2026-07-26): [TOOL-SECURITY] ahora escanea el PAQUETE
     # core/tools/ (empaquetado Strangler Fig) + esta justificacion
     # subio 1345->1349 (2026-07-26): justificacion orchestrator incremento 1 (engine)
-    "scripts/gate.py":                                                  1349,
+    # subio 1349->1352 (2026-07-26): justificacion orchestrator incremento 2 (registry)
+    "scripts/gate.py":                                                  1352,
     "dashboard.py":                                                     1257,
     # ui/dashboard subio 1257->1271 (2026-07-19): titulo dinamico del header
     # (_titulo_app: etiqueta [MODBUS] si AGENTDESK_MODBUS_HOST esta definida)
