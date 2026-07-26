@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-core/tools_schema.py — Catalogo de herramientas (schema OpenAI-compatible).
+core/tools/schema.py — Catalogo de herramientas (schema OpenAI-compatible).
 
 Extraido de core/tools.py (2026-07-26, Strangler Fig v1.3, incremento 1/N):
 ~300 lineas de DATOS PUROS (sin logica) que inflaban el archivo Dios. Las

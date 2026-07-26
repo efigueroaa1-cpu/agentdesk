@@ -20,14 +20,12 @@ Herramientas:
   consultar_a_otro_agente → delega una subtarea a OTRO agente (ADR-0011)
 """
 from __future__ import annotations
-import ast
+import inspect
 import json
 import logging
-import math
-import operator
-from datetime import datetime
 
 from core.key_vault import obtener_key
+from core.tools import factory
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +47,7 @@ def set_orquestador(orquestador) -> None:
     _orquestador_ref = orquestador
 
 # ── Definiciones de herramientas (schema OpenAI-compatible) ───────────────────
-from core.tools_schema import TOOLS_SCHEMA  # schema extraido (Strangler Fig v1.3)
+from core.tools.schema import TOOLS_SCHEMA  # noqa: F401  (reexport del paquete)
 
 
 # ── Implementaciones ──────────────────────────────────────────────────────────
@@ -212,9 +210,9 @@ async def _leer_archivo(archivo_id: str | None = None, max_chars: int = 8000) ->
 # Evaluador matemático por AST con lista blanca: a diferencia de eval() con
 # builtins vacíos (escapable vía atributos), aquí cualquier nodo no listado
 # (atributos, subíndices, lambdas, imports) se rechaza de plano.
-from core.tools_math import _calcular  # calculo extraido (Strangler Fig v1.3)
-from core.tools_finance import _calcular_financiero  # el dispatcher lo llama
-from core.tools_chile import (  # datos externos extraidos (Strangler Fig v1.3)
+from core.tools.calc import _calcular
+from core.tools.finance import _calcular_financiero
+from core.tools.chile import (
     _consultar_indicadores_chile, _obtener_energia_chile, _obtener_partidos,
     _consultar_macro_chile, _buscar_empresa_cmf,
 )
@@ -378,67 +376,50 @@ async def ejecutar_herramienta(nombre: str, argumentos: dict, *,
                                             agente_id_clave=agente_id_clave, user_id=user_id)
 
 
+# ── Registro de herramientas en el factory (nombre -> adaptador) ──────────────
+# El adaptador recibe (argumentos, contexto) y llama a la implementacion con
+# el mapeo de args especifico de cada tool. Agregar una tool nueva es una
+# linea aqui -- el dispatcher de abajo no cambia (elimina el riesgo de NameError
+# por un import olvidado: si la funcion no existe, falla al importar este modulo,
+# no en silencio en tiempo de llamada).
+factory.registrar("consultar_a_otro_agente", lambda a, c: _consultar_a_otro_agente(
+    a["agente_id"], a["pregunta"], origen_id=c["agente_id_clave"], user_id=c["user_id"]))
+factory.registrar("proponer_comando_ot", lambda a, c: _proponer_comando_ot(
+    adaptador=a["adaptador"], tag_id=a["tag_id"], valor=a["valor"],
+    justificacion=a["justificacion"], agente_id=c["agente_id_clave"], user_id=c["user_id"]))
+factory.registrar("buscar_web", lambda a, c: _buscar_web(
+    query=a["query"], max_resultados=a.get("max_resultados", 6)))
+factory.registrar("obtener_pagina", lambda a, c: _obtener_pagina(
+    url=a["url"], max_chars=a.get("max_chars", 8000)))
+factory.registrar("listar_archivos", lambda a, c: _listar_archivos())
+factory.registrar("leer_archivo", lambda a, c: _leer_archivo(
+    archivo_id=a.get("archivo_id"), max_chars=a.get("max_chars", 8000)))
+factory.registrar("calcular", lambda a, c: _calcular(
+    expresion=a["expresion"], descripcion=a.get("descripcion", "")))
+factory.registrar("calcular_financiero", lambda a, c: _calcular_financiero(
+    tipo=a["tipo"], datos=a.get("datos", {})))
+factory.registrar("consultar_macro_chile", lambda a, c: _consultar_macro_chile(
+    indicadores=a.get("indicadores"), historico=a.get("historico", False)))
+factory.registrar("buscar_empresa_cmf", lambda a, c: _buscar_empresa_cmf(
+    nombre_empresa=a.get("nombre_empresa", ""), rut=a.get("rut", "")))
+factory.registrar("consultar_indicadores_chile", lambda a, c: _consultar_indicadores_chile())
+factory.registrar("obtener_energia_chile", lambda a, c: _obtener_energia_chile(
+    a.get("tipo", "solar_eolico")))
+factory.registrar("obtener_partidos", lambda a, c: _obtener_partidos(a["consulta"]))
+
+
 async def _despachar_herramienta(nombre: str, argumentos: dict, *,
                                   agente_id_clave: str = "", user_id: str = "anonimo") -> str:
-    try:
-        if nombre == "consultar_a_otro_agente":
-            return await _consultar_a_otro_agente(
-                argumentos["agente_id"], argumentos["pregunta"],
-                origen_id=agente_id_clave, user_id=user_id,
-            )
-        if nombre == "proponer_comando_ot":
-            return _proponer_comando_ot(
-                adaptador     = argumentos["adaptador"],
-                tag_id        = argumentos["tag_id"],
-                valor         = argumentos["valor"],
-                justificacion = argumentos["justificacion"],
-                agente_id     = agente_id_clave,
-                user_id       = user_id,
-            )
-        if nombre == "buscar_web":
-            return await _buscar_web(
-                query          = argumentos["query"],
-                max_resultados = argumentos.get("max_resultados", 6),
-            )
-        if nombre == "obtener_pagina":
-            return await _obtener_pagina(
-                url       = argumentos["url"],
-                max_chars = argumentos.get("max_chars", 8000),
-            )
-        if nombre == "listar_archivos":
-            return await _listar_archivos()
-        if nombre == "leer_archivo":
-            return await _leer_archivo(
-                archivo_id = argumentos.get("archivo_id"),
-                max_chars  = argumentos.get("max_chars", 8000),
-            )
-        if nombre == "calcular":
-            return await _calcular(
-                expresion  = argumentos["expresion"],
-                descripcion= argumentos.get("descripcion", ""),
-            )
-        if nombre == "calcular_financiero":
-            return await _calcular_financiero(
-                tipo  = argumentos["tipo"],
-                datos = argumentos.get("datos", {}),
-            )
-        if nombre == "consultar_macro_chile":
-            return await _consultar_macro_chile(
-                indicadores = argumentos.get("indicadores"),
-                historico   = argumentos.get("historico", False),
-            )
-        if nombre == "buscar_empresa_cmf":
-            return await _buscar_empresa_cmf(
-                nombre_empresa = argumentos.get("nombre_empresa", ""),
-                rut            = argumentos.get("rut", ""),
-            )
-        if nombre == "consultar_indicadores_chile":
-            return await _consultar_indicadores_chile()
-        if nombre == "obtener_energia_chile":
-            return await _obtener_energia_chile(argumentos.get("tipo", "solar_eolico"))
-        if nombre == "obtener_partidos":
-            return await _obtener_partidos(argumentos["consulta"])
+    """Resolucion dinamica via factory: sin if/elif manual, sin NameError."""
+    adaptador = factory.resolver(nombre)
+    if adaptador is None:
         return f"Herramienta '{nombre}' no reconocida."
+    try:
+        resultado = adaptador(argumentos, {"agente_id_clave": agente_id_clave,
+                                           "user_id": user_id})
+        if inspect.isawaitable(resultado):
+            resultado = await resultado
+        return resultado
     except Exception as e:
         logger.error("ejecutar_herramienta '%s': %s", nombre, e)
         return f"Error ejecutando {nombre}: {e}"

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-core/tools_chile.py — Herramientas de datos externos (indicadores/energia/
+core/tools/chile.py — Herramientas de datos externos (indicadores/energia/
 macro/CMF de Chile + resultados deportivos).
 
 Extraido de core/tools.py (2026-07-26, Strangler Fig v1.3, incremento 3/N):

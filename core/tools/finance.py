@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-core/tools_finance.py — Herramienta financiera (VAN/TIR/TIRM y calcular_financiero).
+core/tools/finance.py — Herramienta financiera (VAN/TIR/TIRM y calcular_financiero).
 
 Extraido de core/tools.py (2026-07-26, Strangler Fig v1.3, incremento 2/N):
 matematica financiera pura (solo math + stdlib), sin acoplamiento con el

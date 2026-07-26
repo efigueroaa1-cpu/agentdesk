@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-core/tools_math.py — Herramienta de calculo matematico seguro (AST, sin eval).
+core/tools/calc.py — Herramienta de calculo matematico seguro (AST, sin eval).
 
 Extraido de core/tools.py (2026-07-26, Strangler Fig v1.3, incremento 3/N):
 evaluacion de expresiones via AST (whitelist de funciones/operadores), sin

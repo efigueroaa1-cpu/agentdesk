@@ -187,7 +187,9 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # subio 1343->1346 (2026-07-26): justificacion incremento 2 (finanzas)
     # BAJO 1346->1337 (2026-07-26): retiro del bloque tools.py de LEGACY_OVERSIZE
     # (incremento 3, tools.py <500). Baseline lockeado al nuevo valor.
-    "scripts/gate.py":                                                  1337,
+    # subio 1337->1345 (2026-07-26): [TOOL-SECURITY] ahora escanea el PAQUETE
+    # core/tools/ (empaquetado Strangler Fig) + esta justificacion
+    "scripts/gate.py":                                                  1345,
     "dashboard.py":                                                     1257,
     # ui/dashboard subio 1257->1271 (2026-07-19): titulo dinamico del header
     # (_titulo_app: etiqueta [MODBUS] si AGENTDESK_MODBUS_HOST esta definida)
@@ -777,23 +779,29 @@ def check_observabilidad(archivos: list[str]) -> list[str]:
 
 def check_seguridad_herramientas() -> list[str]:
     """
-    ADR-0011 [TOOL-SECURITY]: ninguna herramienta expuesta a los agentes
-    (core/tools.py) puede leer os.environ directamente — filtraria API keys
-    y secretos del host al LLM. Si una herramienta necesita ejecutar algo
-    con variables de sistema, debe pasar por sandbox_service.py (entorno
-    minimo controlado / DockerRunner).
+    ADR-0011 [TOOL-SECURITY]: ninguna herramienta expuesta a los agentes puede
+    leer os.environ directamente — filtraria API keys y secretos del host al
+    LLM. Si una herramienta necesita ejecutar algo con variables de sistema,
+    debe pasar por sandbox_service.py (entorno minimo controlado / DockerRunner).
+
+    2026-07-26: escanea el PAQUETE core/tools/ completo (antes un unico
+    core/tools.py) tras el empaquetado Strangler Fig -- toda submodulo cuenta.
     """
     errores = []
     RE_ENVIRON = re.compile(r"\bos\.environ\b")
-    for n, linea in enumerate(leer("core/tools.py"), 1):
-        limpia = linea.strip()
-        if limpia.startswith("#"):
-            continue
-        if RE_ENVIRON.search(linea):
-            errores.append(
-                f"  [TOOL-SECURITY] core/tools.py:{n}: acceso directo a os.environ en "
-                f"una herramienta -> usa sandbox_service (entorno minimo controlado)"
-            )
+    archivos_tools = sorted(
+        str(p.relative_to(RAIZ)).replace("\\", "/")
+        for p in (RAIZ / "core" / "tools").glob("*.py")
+    )
+    for rel in archivos_tools:
+        for n, linea in enumerate(leer(rel), 1):
+            if linea.strip().startswith("#"):
+                continue
+            if RE_ENVIRON.search(linea):
+                errores.append(
+                    f"  [TOOL-SECURITY] {rel}:{n}: acceso directo a os.environ en "
+                    f"una herramienta -> usa sandbox_service (entorno minimo controlado)"
+                )
     return errores
 
 
