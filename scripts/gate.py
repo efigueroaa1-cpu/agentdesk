@@ -112,22 +112,11 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # las 22 ejecuciones del batch eran invisibles para el Panel de
     # Auditoria. tipo="tarea_batch", best-effort (nunca rompe el lote)
     "core/orchestrator.py":                                             1514,
-    # tools.py subio 1120->1153 (2026-07-14): evaluador AST que reemplaza eval()
-    # subio 1153->1209 (2026-07-15, ADR-0011): tool consultar_a_otro_agente
-    # + set_orquestador() (delegacion cognitiva Speak/Listen)
-    # subio 1209->1217 (2026-07-15, ADR-0014): span OTEL tool.ejecutar
-    # envolviendo el dispatcher (_despachar_herramienta)
-    # subio 1217->1282 (2026-07-17, ADR-0024): herramienta proponer_comando_ot
-    # (schema + dispatch + impl — el agente PROPONE, jamas ejecuta)
-    # subio 1282->1293 (2026-07-26): _TAVILY_KEY via obtener_key(vault->.env)
-    # en vez de hardcodeada (ADR-0011 [TOOL-SECURITY]: sin os.environ directo)
-    # + guards de degradacion limpia en _buscar_web/_obtener_pagina
-    # BAJO 1293->991 (2026-07-26, Strangler Fig v1.3 incremento 1/N): TOOLS_SCHEMA
-    # (~300 lineas de datos puros) extraido a core/tools_schema.py. Baseline
-    # lockeado al nuevo valor -- el trinquete solo permite seguir bajando.
-    # BAJO 991->742 (incremento 2/N): finanzas (_npv/_irr/_mirr/
-    # _calcular_financiero) extraidas a core/tools_finance.py.
-    "core/tools.py":                                                     742,
+    # core/tools.py RETIRADO de esta lista (2026-07-26, Strangler Fig v1.3
+    # incrementos 1-3): bajo de 1293 a 443 (<500) extrayendo schema/finanzas/
+    # calculo/datos-Chile a tools_schema.py/tools_finance.py/tools_math.py/
+    # tools_chile.py. Ya no es archivo legado oversize -- lo cubre el limite
+    # normal de 500 para archivos nuevos/modificados.
     # web_monitor.py subio 593->595 (2026-07-14): validacion de esquema http(s)
     "core/web_monitor.py":                                               595,
     # database.py subio 495->580 (2026-07-15, ADR-0013): migraciones Alembic
@@ -196,7 +185,9 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # subio 1335->1343 (2026-07-26): [CRED] reordenado a primera validacion +
     # justificaciones (Strangler Fig incremento 1 tools.py)
     # subio 1343->1346 (2026-07-26): justificacion incremento 2 (finanzas)
-    "scripts/gate.py":                                                  1346,
+    # BAJO 1346->1337 (2026-07-26): retiro del bloque tools.py de LEGACY_OVERSIZE
+    # (incremento 3, tools.py <500). Baseline lockeado al nuevo valor.
+    "scripts/gate.py":                                                  1337,
     "dashboard.py":                                                     1257,
     # ui/dashboard subio 1257->1271 (2026-07-19): titulo dinamico del header
     # (_titulo_app: etiqueta [MODBUS] si AGENTDESK_MODBUS_HOST esta definida)
