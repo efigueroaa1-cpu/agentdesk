@@ -22,7 +22,9 @@ import os
 import re
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 RAIZ = Path(__file__).resolve().parent.parent
 
@@ -199,7 +201,10 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # subio 1345->1349 (2026-07-26): justificacion orchestrator incremento 1 (engine)
     # subio 1349->1352 (2026-07-26): justificacion orchestrator incremento 2 (registry)
     # subio 1352->1355 (2026-07-26): justificacion orchestrator incremento 3 (bridge)
-    "scripts/gate.py":                                                  1355,
+    # subio 1355->1387 (2026-07-27): motor de reglas declarativo (dataclass Regla
+    # + registro REGLAS + evaluar_reglas) reemplaza el if/elif de main() +
+    # justificacion. main() paso de 40 lineas ad-hoc a 1 (evaluar_reglas).
+    "scripts/gate.py":                                                  1387,
     "dashboard.py":                                                     1257,
     # ui/dashboard subio 1257->1271 (2026-07-19): titulo dinamico del header
     # (_titulo_app: etiqueta [MODBUS] si AGENTDESK_MODBUS_HOST esta definida)
@@ -1288,54 +1293,81 @@ def check_notificaciones(archivos: list[str]) -> list[str]:
     return errores
 
 
+# ── Motor de reglas declarativo (2026-07-27) ─────────────────────────────────
+# Cada regla del Guardian es una funcion PURA que retorna list[str] (vacia =
+# pasa). El registro REGLAS reemplaza el if/elif secuencial ad-hoc de main():
+# el ORDEN de la lista ES la prioridad y [CRED] es la primera, innegociable.
+# `usa_archivos` indica si la regla recibe el inventario o corre sin argumentos.
+# Agregar una regla nueva = una entrada aqui, sin tocar main().
+@dataclass(frozen=True)
+class Regla:
+    nombre:       str
+    check:        Callable[..., list]
+    usa_archivos: bool = False
+
+    def evaluar(self, archivos: list) -> list:
+        return self.check(archivos) if self.usa_archivos else self.check()
+
+
+REGLAS: list[Regla] = [
+    # [CRED] PRIMERO -- un secreto hardcodeado es el hallazgo mas grave (2026-07-26,
+    # tras el incidente de la clave Tavily que ninguna regla veia).
+    Regla("CRED-secreto-literal",   check_secreto_literal,        usa_archivos=True),
+    Regla("CRED-credencial-defecto", check_credenciales_defecto,  usa_archivos=True),
+    Regla("TAGS",                   check_tags,                    usa_archivos=True),
+    Regla("TAMANO",                 check_tamano,                  usa_archivos=True),
+    Regla("IMPORTS",                check_imports,                 usa_archivos=True),
+    Regla("EXEC-peligrosa",         check_ejecucion_peligrosa,     usa_archivos=True),
+    Regla("PESADO-sincrono",        check_pesado_sincrono,         usa_archivos=True),
+    Regla("BOOT-validation",        check_boot_validation),
+    Regla("LLM-resilience",         check_llm_resilience,          usa_archivos=True),
+    Regla("DATA-hygiene",           check_data_hygiene),
+    Regla("SCALE-limits",           check_scale_limits,            usa_archivos=True),
+    Regla("ESCALABILIDAD",          check_escalabilidad),
+    Regla("INDUSTRIAL-integrity",   check_industrial_integrity,    usa_archivos=True),
+    Regla("TESTS-adaptadores",      check_tests_adaptadores,       usa_archivos=True),
+    Regla("BANDIT",                 check_bandit),
+    Regla("CONTRATO-auth",          check_contrato_auth),
+    Regla("TELEMETRIA-industrial",  check_telemetria_industrial),
+    Regla("SANDBOX",                check_sandbox),
+    Regla("RESILIENCIA",            check_resiliencia),
+    Regla("AUDITORIA",              check_auditoria),
+    Regla("ENTERPRISE",             check_enterprise),
+    Regla("HARNESSES",              check_harnesses),
+    Regla("HATS",                   check_hats),
+    Regla("AISLAMIENTO-memoria",    check_aislamiento_memoria),
+    Regla("TOOL-SECURITY",          check_seguridad_herramientas),
+    Regla("FASE13",                 check_fase13),
+    Regla("CONTRATO-metric-event",  check_contrato_metric_event,   usa_archivos=True),
+    Regla("CRED-adapters-ot",       check_credenciales_adapters_ot, usa_archivos=True),
+    Regla("CONCURRENCIA-telemetria", check_concurrencia_telemetria),
+    Regla("PERSISTENCIA-dual",      check_persistencia_dual),
+    Regla("OBSERVABILIDAD",         check_observabilidad,          usa_archivos=True),
+    Regla("OBSERVABILIDAD-forense", check_observabilidad_forense),
+    Regla("DISTRIBUTION-integrity", check_distribution_integrity,  usa_archivos=True),
+    Regla("ONBOARDING",             check_onboarding),
+    Regla("SEMANTIC-privacy",       check_semantic_privacy,        usa_archivos=True),
+    Regla("MEMORIA-hermes",         check_memoria_hermes),
+    Regla("INDUSTRIAL-action",      check_industrial_action,       usa_archivos=True),
+    Regla("INTENT-safety",          check_intent_safety,           usa_archivos=True),
+    Regla("INTEGRACION",            check_integracion),
+    Regla("NOTIFICACIONES",         check_notificaciones,          usa_archivos=True),
+]
+
+
+def evaluar_reglas(archivos: list) -> list:
+    """Corre TODAS las reglas del registro en orden y acumula sus violaciones."""
+    errores: list = []
+    for regla in REGLAS:
+        errores += regla.evaluar(archivos)
+    return errores
+
+
 def main() -> int:
     archivos = inventario()
     print(f"Guardian de Arquitectura — {len(archivos)} archivos inventariados")
 
-    errores = []
-    # [CRED] primero: un secreto hardcodeado es el hallazgo mas grave y debe
-    # verse antes que cualquier otra violacion (2026-07-26, tras el incidente
-    # de la clave Tavily que ninguna regla veia).
-    errores += check_secreto_literal(archivos)
-    errores += check_credenciales_defecto(archivos)
-    errores += check_tags(archivos)
-    errores += check_tamano(archivos)
-    errores += check_imports(archivos)
-    errores += check_ejecucion_peligrosa(archivos)
-    errores += check_pesado_sincrono(archivos)
-    errores += check_boot_validation()
-    errores += check_llm_resilience(archivos)
-    errores += check_data_hygiene()
-    errores += check_scale_limits(archivos)
-    errores += check_escalabilidad()
-    errores += check_industrial_integrity(archivos)
-    errores += check_tests_adaptadores(archivos)
-    errores += check_bandit()
-    errores += check_contrato_auth()
-    errores += check_telemetria_industrial()
-    errores += check_sandbox()
-    errores += check_resiliencia()
-    errores += check_auditoria()
-    errores += check_enterprise()
-    errores += check_harnesses()
-    errores += check_hats()
-    errores += check_aislamiento_memoria()
-    errores += check_seguridad_herramientas()
-    errores += check_fase13()
-    errores += check_contrato_metric_event(archivos)
-    errores += check_credenciales_adapters_ot(archivos)
-    errores += check_concurrencia_telemetria()
-    errores += check_persistencia_dual()
-    errores += check_observabilidad(archivos)
-    errores += check_observabilidad_forense()
-    errores += check_distribution_integrity(archivos)
-    errores += check_onboarding()
-    errores += check_semantic_privacy(archivos)
-    errores += check_memoria_hermes()
-    errores += check_industrial_action(archivos)
-    errores += check_intent_safety(archivos)
-    errores += check_integracion()
-    errores += check_notificaciones(archivos)
+    errores = evaluar_reglas(archivos)
 
     if errores:
         print(f"\nVIOLACIONES ({len(errores)}):")
