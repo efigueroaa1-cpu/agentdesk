@@ -10,12 +10,12 @@ from core.schemas import ReporteAgente, extraer_json_objeto
 from core.pipeline import PipelineProcessor
 from core.command_bridge import CommandBridge
 import core.reporter as reporter
-from core.orchestrator_chat_tools import AgentChatToolsMixin
-from core.orchestrator_chat_tools_stream import AgentChatToolsStreamMixin
-from core.orchestrator_tasks import AgentTasksMixin
-from core.orchestrator_engine import OrquestadorEngineMixin
-from core.orchestrator_registry import OrquestadorRegistryMixin
-from core.orchestrator_bridge import OrquestadorBridgeMixin
+from core.orchestrator.chat_tools import AgentChatToolsMixin
+from core.orchestrator.chat_tools_stream import AgentChatToolsStreamMixin
+from core.orchestrator.tasks import AgentTasksMixin
+from core.orchestrator.engine import OrquestadorEngineMixin
+from core.orchestrator.registry import OrquestadorRegistryMixin
+from core.orchestrator.bridge import OrquestadorBridgeMixin
 
 logger = logging.getLogger(__name__)
 
