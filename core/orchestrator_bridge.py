@@ -18,7 +18,10 @@ from core.command_bridge import (
     ACTUALIZAR_AGENTE, RELOAD_FINANZAS,
 )
 
-logger = logging.getLogger(__name__)
+# Logger bajo "core.orchestrator" (no __name__): el codigo extraido de
+# core/orchestrator.py siempre logueo ahi; dashboards y auditoria forense
+# filtran por ese nombre (2026-07-27, contrato operacional preservado).
+logger = logging.getLogger("core.orchestrator")
 
 
 class OrquestadorBridgeMixin:

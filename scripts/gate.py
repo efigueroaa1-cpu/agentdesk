@@ -121,9 +121,11 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # BAJO 1187->1098 (incremento 3/N): CommandBridge -> core/
     # orchestrator_bridge.py (OrquestadorBridgeMixin).
     # BAJO 1098->616 (incremento 4/N): tool-calling (chat_con_herramientas +
-    # _stream) -> core/orchestrator_chat_tools.py + orchestrator_chat_tools_stream.py
-    # (2 mixins de AgentBase, cada uno <500). Baseline lockeado.
-    "core/orchestrator.py":                                              616,
+    # _stream) -> core/orchestrator_chat_tools.py + orchestrator_chat_tools_stream.py.
+    # BAJO 616->348 (incremento 5/N): realizar_tarea (+_con_datos/_encadenada)
+    # -> core/orchestrator_tasks.py (AgentTasksMixin). AgentBase queda <500.
+    # Baseline lockeado.
+    "core/orchestrator.py":                                              348,
     # core/tools.py RETIRADO de esta lista (2026-07-26, Strangler Fig v1.3
     # incrementos 1-3): bajo de 1293 a 443 (<500) extrayendo schema/finanzas/
     # calculo/datos-Chile a tools_schema.py/tools_finance.py/tools_math.py/
@@ -208,7 +210,8 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # + registro REGLAS + evaluar_reglas) reemplaza el if/elif de main() +
     # justificacion. main() paso de 40 lineas ad-hoc a 1 (evaluar_reglas).
     # subio 1387->1391 (2026-07-27): justificacion orchestrator incremento 4 (chat-tools)
-    "scripts/gate.py":                                                  1391,
+    # subio 1391->1394 (2026-07-27): justificacion orchestrator incremento 5 (tasks)
+    "scripts/gate.py":                                                  1394,
     "dashboard.py":                                                     1257,
     # ui/dashboard subio 1257->1271 (2026-07-19): titulo dinamico del header
     # (_titulo_app: etiqueta [MODBUS] si AGENTDESK_MODBUS_HOST esta definida)
