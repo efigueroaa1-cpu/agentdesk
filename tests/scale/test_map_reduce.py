@@ -49,10 +49,16 @@ class _AgenteFake:
         self._respuesta = respuesta
         self._falla    = falla
         self._delay_s  = delay_s
+        # Marcas de tiempo para verificar CONCURRENCIA de forma estructural
+        # (solapamiento), sin depender del wall-clock total (2026-07-28).
+        self.t_inicio: float | None = None
+        self.t_fin:    float | None = None
 
     async def chat_libre(self, mensaje, contexto_archivo="", sesion_id="default",
                           agente_id_clave="", user_id="anonimo") -> str:
+        self.t_inicio = time.monotonic()
         await asyncio.sleep(self._delay_s)
+        self.t_fin = time.monotonic()
         if self._falla:
             raise RuntimeError(f"worker '{self.nombre}' simulando fallo")
         return self._respuesta
@@ -107,30 +113,41 @@ class TestMapReduce(unittest.IsolatedAsyncioTestCase):
         """Mientras 2 workers 'trabajan' (0.3s c/u), el loop sigue atendiendo otras corutinas."""
         agentes = {
             "lider":       _AgenteFake("Lider"),
-            "trabajador.1": _AgenteFake("Trabajador1", respuesta="ok-1", delay_s=0.3),
-            "trabajador.2": _AgenteFake("Trabajador2", respuesta="ok-2", delay_s=0.3),
+            "trabajador.1": _AgenteFake("Trabajador1", respuesta="ok-1", delay_s=0.5),
+            "trabajador.2": _AgenteFake("Trabajador2", respuesta="ok-2", delay_s=0.5),
         }
         svc = self._servicio(agentes)
         latidos = []
 
         async def latir():
-            for _ in range(10):
+            # Latidos durante toda la ventana del worker (0.5s) para verificar
+            # que el loop principal no queda bloqueado.
+            for _ in range(20):
                 latidos.append(time.monotonic())
                 await asyncio.sleep(0.03)
 
-        inicio = time.monotonic()
         _, _ = await asyncio.gather(
             svc.ejecutar("lider", ["trabajador.1", "trabajador.2"], "tarea", user_id="op"),
             latir(),
         )
-        duracion = time.monotonic() - inicio
 
-        # Paralelismo real: 2 workers de 0.3s corren EN PARALELO (~0.3s), no
-        # secuencial (~0.6s) -- confirma que de verdad son hilos concurrentes.
-        self.assertLess(duracion, 0.55, "Los workers no corrieron en paralelo")
+        # Paralelismo real, medido ESTRUCTURALMENTE (independiente del wall-clock,
+        # 2026-07-28): ambos workers ARRANCARON antes de que CUALQUIERA terminara
+        # -> sus ventanas se solapan. En ejecucion serial el 2do worker arranca
+        # recien cuando el 1ro termino, luego max(inicios) >= min(fines). Este
+        # criterio no depende de la latencia de recursos del runner (elimina el
+        # falso rojo por carga de CPU/RAM sin perder poder discriminante).
+        inicios = [a.t_inicio for a in (agentes["trabajador.1"], agentes["trabajador.2"])]
+        fines   = [a.t_fin    for a in (agentes["trabajador.1"], agentes["trabajador.2"])]
+        self.assertTrue(all(t is not None for t in inicios + fines), "los workers no corrieron")
+        self.assertLess(max(inicios), min(fines),
+                        "Los workers no se solaparon -> corrieron en serie, no en paralelo")
 
+        # El loop no quedo bloqueado: un salto entre latidos ~= la duracion del
+        # worker (0.5s) delataria un bloqueo; 0.35s tolera el jitter de scheduling
+        # bajo carga y aun cazaria ese bloqueo.
         intervalos = [b - a for a, b in zip(latidos, latidos[1:])]
-        self.assertLess(max(intervalos), 0.25,
+        self.assertLess(max(intervalos), 0.35,
                         "El event loop principal quedo bloqueado durante el Map-Reduce")
 
     async def test_03_worker_que_falla_no_tumba_a_los_demas(self):
