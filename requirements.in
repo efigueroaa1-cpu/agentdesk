@@ -1,4 +1,4 @@
-﻿# AgentDesk â€” dependencias Python (Fase 7, higiene de dependencias)
+# AgentDesk â€” dependencias Python (Fase 7, higiene de dependencias)
 # Instalar:        pip install -r requirements.in (fuente) -> pip-compile -> requirements.txt (lockfile)
 # Nota: PyInstaller empaqueta esto en el build de escritorio (build_all.ps1).
 
@@ -36,7 +36,7 @@ python-dotenv>=1.2
 # â”€â”€ Observabilidad (ADR-0014: tracing OTEL + metricas Prometheus) â”€â”€â”€â”€â”€â”€â”€â”€â”€
 opentelemetry-api>=1.43
 opentelemetry-sdk>=1.43
-prometheus-client>=0.25
+prometheus-client>=0.26.0
 
 # â”€â”€ Calidad y gate (desarrollo) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 bandit>=1.9.4
