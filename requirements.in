@@ -49,6 +49,7 @@ celery>=5.6                # Queue Mode distribuido (AGENTDESK_QUEUE_URL, ADR-00
 redis>=8.0                 # cliente Redis: ping de deteccion de broker + backend Celery
 paho-mqtt>=2.0             # broker MQTT real (AGENTDESK_MQTT_BROKER)
 psutil>=5.9                # Circuit Breaker de Concurrencia (ADR-0019) + sandbox
+python-json-logger>=3.0    # core/log_config.py: logs JSON estructurados (auditoria forense) -- requerido en import, nunca fue declarado (bug cazado en CI 2026-07-28)
 
 # â”€â”€ Opcionales de planta (ADR-0004) â€” descomenta segÃºn despliegue â”€â”€â”€â”€â”€â”€â”€â”€â”€
 pymodbus>=3.9              # PLC Modbus TCP (AGENTDESK_MODBUS_HOST) - v1.0-industrial: telemetria U1-U5 es capacidad central; >=3.9 por device_id=

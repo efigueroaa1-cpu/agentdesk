@@ -185,6 +185,8 @@ python-dateutil==2.9.0.post0
     #   celery
 python-dotenv==1.2.2
     # via -r requirements.in
+python-json-logger==4.1.0
+    # via -r requirements.in
 python-multipart==0.0.32
     # via -r requirements.in
 pytz==2026.3.post1
