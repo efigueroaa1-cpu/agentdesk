@@ -6,6 +6,7 @@ sin perder el handler activo (el RotatingFileHandler lo hace internamente en cad
 """
 import logging
 import shutil
+import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from pythonjsonlogger import jsonlogger
@@ -16,6 +17,43 @@ _LIBS_EXTERNAS = ('httpcore', 'httpx', 'google_genai', 'urllib3', 'asyncio')
 # ── Límites de rotación ────────────────────────────────────────────────────────
 MAX_BYTES    = 10 * 1024 * 1024   # 10 MB por fichero
 BACKUP_COUNT = 5                   # sistema.log → sistema.log.1 … .5
+
+_ROLLOVER_REINTENTOS = 3
+_ROLLOVER_ESPERA_S   = 0.1
+
+
+class RotatingFileHandlerSeguro(RotatingFileHandler):
+    """RotatingFileHandler defensivo para Windows (2026-07-28).
+
+    En Windows, doRollover() lanza PermissionError [WinError 32] si otro proceso
+    (ej. el Dashboard UI leyendo sistema.log) mantiene el archivo abierto durante
+    el rename. Ese fallo JAMAS debe propagarse al que emite el log (el
+    orquestador). Se reintenta un par de veces (el lock suele ser breve) y, si
+    aun no se puede, se re-abre el stream y se sigue escribiendo en el archivo
+    actual (crece un poco de mas; se rotara en el proximo intento exitoso).
+    """
+
+    def doRollover(self) -> None:
+        for intento in range(_ROLLOVER_REINTENTOS):
+            try:
+                super().doRollover()
+                return
+            except OSError as exc:   # PermissionError [WinError 32] incluido
+                if intento < _ROLLOVER_REINTENTOS - 1:
+                    time.sleep(_ROLLOVER_ESPERA_S)
+                    continue
+                # Ultimo intento fallido: degradar con gracia, NUNCA propagar.
+                # doRollover cierra el stream antes de renombrar -> re-abrirlo
+                # para que emit() pueda seguir escribiendo sin caer en un
+                # bucle de handleError por stream=None.
+                if self.stream is None:
+                    try:
+                        self.stream = self._open()
+                    except OSError:
+                        pass
+                import sys
+                print(f"[log_config] rotacion diferida (archivo en uso): {exc}",
+                      file=sys.stderr)
 
 
 def configurar_logging(
@@ -50,8 +88,9 @@ def configurar_logging(
     consola.setLevel(nivel_consola)
     consola.setFormatter(texto_fmt)
 
-    # RotatingFileHandler — se rota automáticamente al superar MAX_BYTES
-    archivo = RotatingFileHandler(
+    # RotatingFileHandlerSeguro — rota al superar MAX_BYTES; una rotacion que
+    # falla por archivo bloqueado (WinError 32, Dashboard leyendo) NO propaga.
+    archivo = RotatingFileHandlerSeguro(
         str(ruta_log),
         maxBytes=MAX_BYTES,
         backupCount=BACKUP_COUNT,
