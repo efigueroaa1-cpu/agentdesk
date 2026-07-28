@@ -18,6 +18,24 @@ from unittest.mock import AsyncMock, patch
 
 from core.orchestrator import AgentBase, Orquestador
 
+# Modo CPU-only (2026-07-28): ejecutar_todos_paralelo capea max_paralelo=1 si
+# detecta offline (llm_service.hay_conectividad). Para que los tests de
+# CONCURRENCIA sean deterministas (y no dependan de la red real), se fuerza
+# 'online' a nivel de modulo; el test del capping offline lo sobreescribe local.
+_patch_online = None
+
+
+def setUpModule():
+    global _patch_online
+    _patch_online = patch("core.services.llm_service.llm_service.hay_conectividad",
+                          return_value=True)
+    _patch_online.start()
+
+
+def tearDownModule():
+    if _patch_online is not None:
+        _patch_online.stop()
+
 
 class _AgenteFake:
     """Doble de AgentBase: registra concurrencia y datos recibidos."""
@@ -91,6 +109,38 @@ class TestParaleloControlado(unittest.TestCase):
         orq.config = {"agents": []}
         resultados = asyncio.run(orq.ejecutar_todos_paralelo("reporte_ventas"))
         self.assertEqual(len(resultados), 1)
+
+
+class TestConcurrenciaOffline(unittest.TestCase):
+    """Modo CPU-only: sin red, el lote se serializa a max_paralelo=1 para no
+    saturar el host con inferencia local concurrente (2026-07-28)."""
+
+    def setUp(self):
+        _AgenteFake.contador = 0
+        _AgenteFake.pico = 0
+
+    def test_05_offline_serializa_a_un_agente_por_vez(self):
+        agentes = {f"a{i}": _AgenteFake(f"A{i}", tardanza_s=0.05) for i in range(6)}
+        orq = _orquestador_con(agentes, {"max_agentes_paralelo": 4,
+                                         "timeout_tarea_s": 5})
+        with patch("core.services.llm_service.llm_service.hay_conectividad",
+                   return_value=False):   # offline
+            resultados = asyncio.run(orq.ejecutar_todos_paralelo("reporte_ventas"))
+        self.assertEqual(len(resultados), 6)
+        self.assertTrue(all(r is not None for r in resultados))
+        self.assertEqual(_AgenteFake.pico, 1,
+                         "offline debe serializar: nunca 2 agentes a la vez")
+
+    def test_06_override_explicito_gana_sobre_el_capping_offline(self):
+        """Un max_paralelo pasado a mano respeta la eleccion del llamador."""
+        agentes = {f"a{i}": _AgenteFake(f"A{i}", tardanza_s=0.05) for i in range(6)}
+        orq = _orquestador_con(agentes, {"max_agentes_paralelo": 4,
+                                         "timeout_tarea_s": 5})
+        with patch("core.services.llm_service.llm_service.hay_conectividad",
+                   return_value=False):
+            asyncio.run(orq.ejecutar_todos_paralelo("reporte_ventas", max_paralelo=3))
+        self.assertGreater(_AgenteFake.pico, 1,
+                           "un override explicito no debe ser capeado por offline")
 
 
 class _AgenteFakeOrden:

@@ -67,7 +67,20 @@ class OrquestadorEngineMixin:
         config.json), alineado con el zip del dashboard de main.py.
         """
         cfg_orq      = self.config.get("orquestador", {}) if isinstance(self.config, dict) else {}
-        max_paralelo = max_paralelo or cfg_orq.get("max_agentes_paralelo", 4)
+        if max_paralelo is None:
+            max_paralelo = cfg_orq.get("max_agentes_paralelo", 4)
+            # Modo CPU-only offline (2026-07-28): sin red, todos los agentes caen
+            # a Ollama; correr varios a la vez satura el host (CPU/RAM) y congela
+            # la Rich Live. Se serializa a 1 -> el 100% del CPU va a un agente por
+            # vez, sin colapsar. Solo aplica si NO hubo override explicito.
+            try:
+                from core.services.llm_service import llm_service
+                if not llm_service.hay_conectividad():
+                    logger.warning("PARALELO: modo offline detectado -> "
+                                   "max_paralelo=1 (CPU-only, inferencia local)")
+                    max_paralelo = 1
+            except Exception:
+                pass   # la deteccion nunca debe romper el lote
         timeout_s    = timeout_s or cfg_orq.get("timeout_tarea_s", 180)
         semaforo     = asyncio.Semaphore(max_paralelo)
 

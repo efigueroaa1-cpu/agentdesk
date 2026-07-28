@@ -271,6 +271,11 @@ class LlmService:
             c["ts"] = ahora
         return c["online"]
 
+    def hay_conectividad(self) -> bool:
+        """API publica de la sonda cacheada: la usa el orquestador para decidir
+        la concurrencia del lote (offline -> serializar, CPU-only)."""
+        return self._hay_conectividad()
+
     def _cadena_efectiva(self, modelo_preferido: str | None) -> list[tuple[str, str]]:
         """
         Sin modelo_preferido: la cadena estandar (groq->gemini->openai->mock).
