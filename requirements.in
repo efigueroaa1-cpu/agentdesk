@@ -1,9 +1,9 @@
-﻿# AgentDesk â€” dependencias Python (Fase 7, higiene de dependencias)
+# AgentDesk â€” dependencias Python (Fase 7, higiene de dependencias)
 # Instalar:        pip install -r requirements.in (fuente) -> pip-compile -> requirements.txt (lockfile)
 # Nota: PyInstaller empaqueta esto en el build de escritorio (build_all.ps1).
 
 # â”€â”€ NÃºcleo web / API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-fastapi>=0.138
+fastapi>=0.140.8
 uvicorn>=0.49
 starlette>=1.3
 pydantic>=2.13
