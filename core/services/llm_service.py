@@ -83,6 +83,25 @@ CADENA_FALLBACK: list[tuple[str, str]] = [
     ("mock",   "mock:agentdesk-demo"),
 ]
 
+# Proveedores que NO usan red: en Modo Faena (Wi-Fi OFF) se despacha directo a
+# estos, saltando los cloud que solo darian getaddrinfo/timeout (2026-07-28).
+PROVEEDORES_LOCALES = frozenset({"ollama", "mock"})
+_CONECTIVIDAD_TTL_S = 20.0   # se re-sondea a lo sumo cada 20s (cachea el lote)
+_HOSTS_SONDEO = (("api.groq.com", 443), ("8.8.8.8", 53))
+
+
+def _sondear_conectividad(timeout: float = 1.0) -> bool:
+    """True si hay ruta a internet. Un intento TCP corto: sin ruta falla
+    rapido (no espera el timeout del SDK del proveedor). Best-effort."""
+    import socket
+    for host, puerto in _HOSTS_SONDEO:
+        try:
+            with socket.create_connection((host, puerto), timeout=timeout):
+                return True
+        except OSError:
+            continue
+    return False
+
 LATENCIA_MAX_S   = 30.0    # más de esto = proveedor 'colgado' → abrir circuito
 ENFRIAMIENTO_S   = 120.0   # tiempo que un circuito abierto permanece inactivo
 FALLOS_PARA_ABRIR = 2      # fallos consecutivos que abren el circuito
@@ -160,7 +179,12 @@ class LlmService:
         latencia_max_s: float = LATENCIA_MAX_S,
         latencia_por_proveedor: dict[str, float] | None = None,
         fallos_por_proveedor: dict[str, int] | None = None,
+        sondear_conectividad: Callable[[], bool] | None = None,
     ):
+        # Fast-fail offline (2026-07-28): sonda de conectividad inyectable
+        # (tests) + cache con TTL para no sondear por cada agente del lote.
+        self._sondear_conectividad = sondear_conectividad or _sondear_conectividad
+        self._conectividad = {"ts": 0.0, "online": None}
         if generador_con_uso is not None:
             self._generar_con_uso = generador_con_uso
         elif generador is not None:
@@ -236,6 +260,16 @@ class LlmService:
         cb = self._circuitos.get(proveedor)
         if cb:
             cb.registrar_exito()
+
+    def _hay_conectividad(self) -> bool:
+        """Sonda de red cacheada (TTL): True online, False Modo Faena. Solo se
+        consulta cuando se esta por intentar un proveedor CLOUD."""
+        ahora = time.monotonic()
+        c = self._conectividad
+        if c["online"] is None or (ahora - c["ts"]) >= _CONECTIVIDAD_TTL_S:
+            c["online"] = self._sondear_conectividad()
+            c["ts"] = ahora
+        return c["online"]
 
     def _cadena_efectiva(self, modelo_preferido: str | None) -> list[tuple[str, str]]:
         """
@@ -327,6 +361,12 @@ class LlmService:
             cb = self._circuitos[proveedor]
             if not cb.disponible():
                 intentos.append(f"{proveedor}:circuito-abierto")
+                continue
+
+            # Fast-fail Modo Faena: un proveedor CLOUD sin ruta a internet solo
+            # daria getaddrinfo/timeout -- se salta al instante (2026-07-28).
+            if proveedor not in PROVEEDORES_LOCALES and not self._hay_conectividad():
+                intentos.append(f"{proveedor}:sin-conectividad")
                 continue
 
             t0 = time.monotonic()

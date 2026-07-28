@@ -330,6 +330,59 @@ class TestUmbralFallosPorProveedorOllama(unittest.TestCase):
         self.assertEqual(FALLOS_PARA_ABRIR_POR_PROVEEDOR.get("ollama"), 5)
 
 
+class TestFastFailSinConectividad(unittest.TestCase):
+    """Modo Faena (Wi-Fi OFF): sin ruta a internet, la cadena NO debe perder
+    tiempo intentando los proveedores cloud (getaddrinfo/timeout) -- los salta
+    instantaneamente y despacha directo a Ollama (2026-07-28)."""
+
+    _CADENA = [("groq", "groq:llama-3.3-70b-versatile"),
+               ("gemini", "gemini:models/gemini-2.5-flash"),
+               ("ollama", "ollama:llama3.2"),
+               ("mock", "mock:agentdesk-demo")]
+
+    def test_27_offline_salta_cloud_sin_intentarlo_y_usa_ollama(self):
+        gen = _generador_con_fallos(fallan=set())
+        svc = LlmService(generador=gen, cadena=self._CADENA,
+                         sondear_conectividad=lambda: False)   # offline
+        r = _run(svc.generar("informe"))
+        self.assertEqual(r["proveedor"], "ollama",
+                         "offline debe ir directo a ollama, sin tocar groq/gemini")
+        # los cloud se marcan 'sin-conectividad', NO se llamo al generador con ellos
+        self.assertNotIn("groq", gen.llamadas, "no debe INTENTAR groq offline")
+        self.assertNotIn("gemini", gen.llamadas)
+        self.assertIn("groq:sin-conectividad", r["intentos"])
+
+    def test_28_online_intenta_cloud_normalmente(self):
+        gen = _generador_con_fallos(fallan=set())
+        svc = LlmService(generador=gen, cadena=self._CADENA,
+                         sondear_conectividad=lambda: True)    # online
+        r = _run(svc.generar("informe"))
+        self.assertEqual(r["proveedor"], "groq", "online usa la cadena normal")
+
+    def test_29_conectividad_se_cachea_no_sondea_por_cada_agente(self):
+        gen = _generador_con_fallos(fallan=set())
+        sondeos = {"n": 0}
+        def _sondear():
+            sondeos["n"] += 1
+            return False
+        svc = LlmService(generador=gen, cadena=self._CADENA,
+                         sondear_conectividad=_sondear)
+        for _ in range(5):   # 5 agentes del lote
+            _run(svc.generar("informe"))
+        self.assertEqual(sondeos["n"], 1,
+                         "el sondeo de red se cachea (TTL): 1 sola vez para el lote")
+
+    def test_30_ollama_preferido_no_sondea_red(self):
+        """Si el agente ya prefiere ollama (local), no hay motivo de sondear."""
+        gen = _generador_con_fallos(fallan=set())
+        sondeos = {"n": 0}
+        svc = LlmService(generador=gen, cadena=self._CADENA,
+                         sondear_conectividad=lambda: sondeos.__setitem__("n", sondeos["n"]+1) or True)
+        r = _run(svc.generar("informe", modelo_preferido="ollama:llama3.2"))
+        self.assertEqual(r["proveedor"], "ollama")
+        self.assertEqual(sondeos["n"], 0, "ollama preferido responde sin sondear la nube")
+
+
 class TestMockReporteEstructurado(unittest.TestCase):
     """Optimizacion de Mock (2026-07-19): cuando el prompt pide un reporte
     JSON, la respuesta mock debe cumplir ReporteAgente ESTRICTAMENTE y
