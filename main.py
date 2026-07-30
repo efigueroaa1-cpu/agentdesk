@@ -271,8 +271,24 @@ async def main() -> None:
                             finally:
                                 adaptador_ua.detener()
 
+                        # corrida_id estable entre reinicios (hashlib, no hash()
+                        # que va salteado por proceso): misma tarea + mismo set de
+                        # agentes + mismo dia -> si la corrida se corta, al
+                        # relanzarla reanuda desde el checkpoint del ultimo agente
+                        # completado en vez de repetir los 22.
+                        import hashlib
+                        # usedforsecurity=False: el hash solo deriva un id de
+                        # corrida estable, no es un control de seguridad.
+                        _firma = hashlib.sha1(
+                            "|".join(sorted(a["id"] for a in agentes_cfg)).encode(),
+                            usedforsecurity=False,
+                        ).hexdigest()[:8]
+                        corrida_id = (f"batch-reporte_ventas-"
+                                      f"{datetime.date.today():%Y%m%d}-{_firma}")
+
                         resultados = await app.ejecutar_todos_paralelo(
                             "reporte_ventas", datos_override=datos_paralelo,
+                            corrida_id=corrida_id,
                         )
                         for cfg_ag, res in zip(agentes_cfg, resultados):
                             ui.marcar_completado(cfg_ag['nombre'], ok=(res is not None))
@@ -293,6 +309,14 @@ async def main() -> None:
                                 continue
                             mostrar_dashboard(data, titulo_resultado=cfg_ag['nombre'])
                             await guardar_reporte(cfg_ag['id'], data, log)
+                        # Corrida completa al 100%: descartar el checkpoint para
+                        # que la proxima corrida del mismo dia arranque limpia.
+                        if resultados and all(r is not None for r in resultados):
+                            try:
+                                from core.repositories.checkpoint_repository import limpiar_checkpoints
+                                limpiar_checkpoints(corrida_id)
+                            except Exception as exc:
+                                log.warning("No se pudo limpiar checkpoint de corrida: %s", exc)
                         ui.reanudar()
                         continue
 

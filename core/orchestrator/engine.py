@@ -30,6 +30,7 @@ class OrquestadorEngineMixin:
         datos_override: dict | str | None = None,
         max_paralelo: int | None = None,
         timeout_s: float | None = None,
+        corrida_id: str | None = None,
     ) -> list[dict | None]:
         """
         Ejecuta realizar_tarea() en TODOS los agentes con control de flujo:
@@ -94,7 +95,41 @@ class OrquestadorEngineMixin:
         JITTER_BASE_S          = 1.5
         _saturacion_groq       = {"consecutivos": 0}
 
+        # Checkpoint de corrida (opcional): con corrida_id, los agentes ya
+        # completados en una corrida previa interrumpida se leen del checkpoint
+        # y no se re-ejecutan. Sin corrida_id el comportamiento no cambia.
+        completados: dict = {}
+        if corrida_id:
+            try:
+                from core.repositories.checkpoint_repository import obtener_checkpoints
+                completados = obtener_checkpoints(corrida_id)
+                if completados:
+                    logger.info(
+                        "PARALELO: reanudando corrida '%s' — %d/%d agentes ya "
+                        "completados (checkpoint)", corrida_id,
+                        len(completados), len(self.agentes),
+                    )
+            except Exception as exc:
+                logger.warning("PARALELO: no se pudieron leer checkpoints de '%s' "
+                               "(%s) — corrida completa", corrida_id, exc)
+
+        def _persistir_checkpoint(aid: str, resultado: dict | None) -> None:
+            if not corrida_id or not resultado:
+                return
+            if isinstance(resultado, dict) and resultado.get("_api_error"):
+                return
+            try:
+                from core.repositories.checkpoint_repository import guardar_checkpoint
+                guardar_checkpoint(corrida_id, aid, resultado)
+            except Exception:
+                logger.warning("PARALELO: no se pudo guardar checkpoint de '%s' "
+                               "(best-effort)", aid, extra={"agente": aid})
+
         async def _uno(aid: str, agente) -> dict | None:
+            if aid in completados:
+                logger.info("PARALELO: agente '%s' reanudado desde checkpoint",
+                            agente.nombre, extra={"agente": agente.nombre})
+                return completados[aid]
             async with semaforo:
                 if _saturacion_groq["consecutivos"] >= UMBRAL_429_PERSISTENTE:
                     espera = JITTER_BASE_S + random.uniform(0, 0.5)
@@ -129,6 +164,7 @@ class OrquestadorEngineMixin:
                     _saturacion_groq["consecutivos"] = 0
 
                 self._auditar_batch(aid, agente, resultado, time.monotonic() - _t0)
+                _persistir_checkpoint(aid, resultado)
                 return resultado
 
         logger.info(

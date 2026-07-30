@@ -69,6 +69,13 @@ cryptography==49.0.0
     #   -r requirements.in
     #   asyncua
     #   google-auth
+keyring==25.5.0
+    # via -r requirements.in
+    #   almacenamiento primario de API keys en el Windows Credential Manager
+    #   (core/key_vault.py). Opcional en runtime: degrada al vault cifrado.
+pywin32-ctypes==0.2.3
+    # via keyring
+    #   backend del Credential Manager de Windows (keyring.backends.Windows)
     #   pyopenssl
 defusedxml==0.7.1
     # via fpdf2

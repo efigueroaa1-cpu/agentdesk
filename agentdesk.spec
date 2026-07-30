@@ -84,6 +84,14 @@ a = Analysis(
         "core.docs_gen",
         # JWT para auth backend
         "jwt",
+        # Credential Manager de Windows (core/key_vault.py): keyring elige el
+        # backend por entry-points en runtime, invisible al analisis estatico.
+        # El paquete completo + el backend Windows + su dependencia ctypes.
+        "keyring",
+        "keyring.backends",
+        "keyring.backends.Windows",
+        "win32ctypes.core",
+        "win32ctypes.pywin32.win32cred",
         # SQLite (stdlib urllib para HTTP — sin aiohttp)
         "sqlalchemy",
         "sqlalchemy.dialects.sqlite",

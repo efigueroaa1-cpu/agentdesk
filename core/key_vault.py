@@ -1,12 +1,17 @@
 """
-core/key_vault.py — Cifrado de API keys en disco.
+core/key_vault.py — Gestion de API keys en tres niveles.
 
-Usa AES-256-GCM (via cryptography) con una clave maestra derivada de:
-  - ID de la máquina (único por instalación)
-  - Nombre de usuario del SO
+Prioridad de lectura (obtener_key):
+  1. Windows Credential Manager (via keyring), si esta disponible.
+  2. Vault cifrado local (.keyvault): AES-256-GCM con clave maestra derivada
+     de ID de maquina + usuario del SO. Ilegible si se copia el archivo a
+     otra maquina.
+  3. Variable de entorno / .env (fallback secundario, texto plano).
 
-Esto hace que las keys cifradas sean ilegibles si se copia el .env a otra máquina.
-Sin pywin32, sin dependencias de Windows específicas.
+El Credential Manager es el almacenamiento primario recomendado: no deja el
+secreto en un archivo del perfil. keyring es opcional; si no esta instalado o
+el SO no expone un backend (build headless, entorno sin sesion), la gestion
+degrada a los niveles 2 y 3 sin interrumpir el arranque ni el Modo Faena.
 """
 from __future__ import annotations
 import base64
@@ -18,6 +23,55 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 _VAULT_FILE = None   # Se inicializa la primera vez que se usa
+
+# ── Credential Manager del SO (keyring) ────────────────────────────────────────
+# Nombre de servicio bajo el que se registran las keys en el Credential Manager
+# de Windows. El "usuario" de cada credencial es el nombre de la variable
+# (AGENTDESK_TAVILY_KEY, GROQ_API_KEY, GEMINI_API_KEY, ...).
+_KEYRING_SERVICE = "AgentDesk"
+_keyring_estado: bool | None = None   # None=sin probar; cachea el resultado
+
+
+def _keyring():
+    """Devuelve el modulo keyring si esta disponible y operativo, si no None.
+
+    Deteccion best-effort y cacheada: en un entorno sin keyring o sin backend
+    del SO, devuelve None una vez y no vuelve a intentarlo.
+    """
+    global _keyring_estado
+    if _keyring_estado is False:
+        return None
+    try:
+        import keyring
+        from keyring.errors import KeyringError  # noqa: F401  (valida el backend)
+        _keyring_estado = True
+        return keyring
+    except Exception:
+        _keyring_estado = False
+        return None
+
+
+def _keyring_get(nombre_env: str) -> str | None:
+    kr = _keyring()
+    if kr is None:
+        return None
+    try:
+        return kr.get_password(_KEYRING_SERVICE, nombre_env)
+    except Exception as exc:
+        logger.debug("keyring get '%s': %s", nombre_env, exc)
+        return None
+
+
+def _keyring_set(nombre_env: str, valor: str) -> bool:
+    kr = _keyring()
+    if kr is None:
+        return False
+    try:
+        kr.set_password(_KEYRING_SERVICE, nombre_env, valor)
+        return True
+    except Exception as exc:
+        logger.warning("keyring set '%s': %s", nombre_env, exc)
+        return False
 
 
 def _vault_path() -> Path:
@@ -90,8 +144,11 @@ def descifrar(ciphertext: str) -> str:
 
 
 def guardar_key_cifrada(nombre_env: str, valor: str) -> bool:
-    """Cifra y guarda una API key en el vault."""
+    """Guarda una API key en el Credential Manager del SO (si esta disponible)
+    y en el vault cifrado local. Se escriben ambos a proposito: el vault
+    garantiza la lectura aunque el build no incluya keyring."""
     import json
+    _keyring_set(nombre_env, valor)   # almacenamiento primario, best-effort
     vpath = _vault_path()
     vault: dict = {}
     if vpath.exists():
@@ -107,9 +164,13 @@ def guardar_key_cifrada(nombre_env: str, valor: str) -> bool:
 
 
 def obtener_key(nombre_env: str) -> str | None:
-    """Obtiene una API key: primero del vault (cifrada), luego del .env/environ."""
+    """Obtiene una API key con prioridad Credential Manager -> vault -> .env."""
     import json
-    # 1. Intentar desde el vault
+    # 1. Windows Credential Manager (keyring), si esta disponible
+    desde_keyring = _keyring_get(nombre_env)
+    if desde_keyring:
+        return desde_keyring
+    # 2. Vault cifrado local (.keyvault)
     vpath = _vault_path()
     if vpath.exists():
         try:
@@ -118,14 +179,15 @@ def obtener_key(nombre_env: str) -> str | None:
                 return descifrar(vault[nombre_env])
         except Exception:
             pass
-    # 2. Fallback: variable de entorno
+    # 3. Fallback secundario: variable de entorno / .env
     return os.environ.get(nombre_env)
 
 
 def migrar_env_a_vault() -> dict:
     """
-    Lee el .env y migra las API keys al vault cifrado.
-    Útil para la primera vez que el usuario actualiza a v0.3.
+    Lee el .env y migra las API keys al Credential Manager del SO y al vault
+    cifrado (guardar_key_cifrada escribe en ambos). Idempotente: correr esto
+    en cada arranque re-sincroniza sin duplicar.
     """
     from core.path_manager import data_path
     env_path = data_path("") / ".env"
@@ -133,6 +195,7 @@ def migrar_env_a_vault() -> dict:
         return {"migradas": 0}
 
     claves_a_migrar = [
+        "AGENTDESK_TAVILY_KEY",
         "GEMINI_API_KEY", "GROQ_API_KEY", "OPENAI_API_KEY",
         "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY",
     ]

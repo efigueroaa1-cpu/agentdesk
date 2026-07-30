@@ -215,7 +215,9 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # subio 1391->1394 (2026-07-27): justificacion orchestrator incremento 5 (tasks)
     # subio 1394->1397 (2026-07-27): justificacion incremento 6 (empaquetado)
     # subio 1397->1399 (2026-07-30): suite test_ollama_single_watchdog gateada (v1.3-GOLD)
-    "scripts/gate.py":                                                  1399,
+    # subio 1399->1402 (2026-07-30): suite test_checkpoint_resume gateada
+    # (reanudacion de corrida, Soberania de Datos) + esta justificacion
+    "scripts/gate.py":                                                  1402,
     "dashboard.py":                                                     1257,
     # ui/dashboard subio 1257->1271 (2026-07-19): titulo dinamico del header
     # (_titulo_app: etiqueta [MODBUS] si AGENTDESK_MODBUS_HOST esta definida)
@@ -890,7 +892,8 @@ def check_resiliencia() -> list[str]:
     """Fase 8: fallback LLM con circuit breaker y cola de trabajos pesados."""
     return (_correr_suite("tests.resilience.test_llm_fallback", "RESILIENCIA")
             + _correr_suite("tests.resilience.test_queue_service", "RESILIENCIA")
-            + _correr_suite("tests.resilience.test_ollama_single_watchdog", "RESILIENCIA"))
+            + _correr_suite("tests.resilience.test_ollama_single_watchdog", "RESILIENCIA")
+            + _correr_suite("tests.resilience.test_checkpoint_resume", "RESILIENCIA"))
 
 
 def check_auditoria() -> list[str]:
