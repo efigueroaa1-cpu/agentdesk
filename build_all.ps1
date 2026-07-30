@@ -185,7 +185,9 @@ if (-not $SkipTauri) {
     $nsisDir  = Join-Path $TauriDir "target\release\bundle\nsis"
     $installer = Get-ChildItem $nsisDir -Filter "*.exe" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
     if ($installer) {
-        $newName = [System.IO.Path]::GetFileNameWithoutExtension($installer.Name) + "_$TS.exe"
+        # Estandar de entrega v1.3-GOLD (2026-07-30): nombre fijo independiente
+        # de la version semver que emita NSIS, con timestamp de trazabilidad.
+        $newName = "AgentDesk_v1.3-GOLD_x64-setup_$TS.exe"
         $dest    = Join-Path $Root $newName
         Copy-Item $installer.FullName $dest
         # Firmar el instalador NSIS — es lo que SmartScreen evalua al descargar (ADR-0022)

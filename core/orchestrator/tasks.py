@@ -112,17 +112,21 @@ class AgentTasksMixin:
         )
         instruccion = f"{instruccion}{harness_ctx}"
 
-        # ── Bucle de auto-corrección: hasta 3 intentos ────────────────────────
-        # Ollama (2026-07-20, hallazgo real en vivo): hasta 300s POR LLAMADA
-        # (LATENCIA_MAX_POR_PROVEEDOR, llm_service.py) -- 3 intentos completos
-        # pueden exceder timeout_tarea_s externo antes de que el 2do/3er
-        # intento termine ("Gestor Logistico" quedo descartado por timeout a
-        # mitad del intento 2). Con Ollama respondiendo, el bucle se rinde en
-        # MAX_INTENTOS_OLLAMA intentos para dejarle margen real al timeout
-        # externo, en vez de agotar 3 intentos completos casi seguro.
+        # ── Bucle de auto-corrección: hasta 3 intentos (cloud) / 1 (Ollama) ───
+        # Ollama (2026-07-30, Modo Faena CPU): hasta 600s POR LLAMADA
+        # (LATENCIA_MAX_POR_PROVEEDOR={"ollama":600}, llm_service.py). Con 2
+        # intentos, 2×600s (=1200s) DESBORDABAN el watchdog externo
+        # timeout_tarea_s=650 (engine.py, asyncio.wait_for) -> el agente moria
+        # a mitad del 2do intento ("Gestor Logistico descartado por timeout").
+        # SOBERANIA OPERATIVA v1.3-GOLD: con Ollama se hace UNA sola pasada
+        # (MAX_INTENTOS_OLLAMA=1) para que el ExecutionTimeout de 650s sea el
+        # UNICO watchdog activo y ningun reintento local pueda desbordarlo. El
+        # parche anti-alucinacion de los prompts ("Dato No Disponible") hace que
+        # esa unica pasada ya valide schema+GroundingGuard. Los proveedores
+        # cloud (rapidos) conservan las 3 pasadas de auto-correccion.
         instruccion_actual = instruccion
         MAX_INTENTOS        = 3
-        MAX_INTENTOS_OLLAMA = 2
+        MAX_INTENTOS_OLLAMA = 1
         limite_intentos      = MAX_INTENTOS   # se ajusta tras la 1ra respuesta real
 
         for intento in range(1, MAX_INTENTOS + 1):
