@@ -1,4 +1,4 @@
-﻿# AgentDesk â€” dependencias Python (Fase 7, higiene de dependencias)
+# AgentDesk â€” dependencias Python (Fase 7, higiene de dependencias)
 # Instalar:        pip install -r requirements.in (fuente) -> pip-compile -> requirements.txt (lockfile)
 # Nota: PyInstaller empaqueta esto en el build de escritorio (build_all.ps1).
 
@@ -46,7 +46,7 @@ bandit>=1.9.4
 psycopg2-binary>=2.9       # PostgreSQL (AGENTDESK_DB_URL) â€” engine ORM sincrono
 asyncpg>=0.31              # PostgreSQL â€” chequeo async de arranque (ADR-0013)
 celery>=5.6                # Queue Mode distribuido (AGENTDESK_QUEUE_URL, ADR-0019)
-redis>=8.0                 # cliente Redis: ping de deteccion de broker + backend Celery
+redis>=8.1.0                 # cliente Redis: ping de deteccion de broker + backend Celery
 paho-mqtt>=2.0             # broker MQTT real (AGENTDESK_MQTT_BROKER)
 psutil>=5.9                # Circuit Breaker de Concurrencia (ADR-0019) + sandbox
 python-json-logger>=3.0    # core/log_config.py: logs JSON estructurados (auditoria forense) -- requerido en import, nunca fue declarado (bug cazado en CI 2026-07-28)
