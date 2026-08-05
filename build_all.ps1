@@ -97,6 +97,18 @@ if (-not $SkipPython) {
     $piResult = python -c "import PyInstaller; print(PyInstaller.__version__)" 2>$null
     if ($LASTEXITCODE -ne 0) { Fail "PyInstaller no instalado. Ejecuta: pip install pyinstaller" }
     OK "PyInstaller: $piResult"
+
+    # Integridad de dependencias (ADR-0028): el lockfile instalado debe coincidir,
+    # incluidos los criticos de Windows (keyring/pywin32-ctypes) sin los que el
+    # .exe pierde el Credential Manager sin error visible. EAP=Continue solo aqui:
+    # el veredicto es el exit code, no un posible stderr de la libreria.
+    Step "Validando integridad de dependencias (scripts/check_deps.py)..."
+    $eapPrev = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+    python scripts\check_deps.py
+    $codigoDeps = $LASTEXITCODE
+    $ErrorActionPreference = $eapPrev
+    if ($codigoDeps -ne 0) { Fail "check_deps.py: el entorno no coincide con requirements.txt. Corre: pip install -r requirements.txt" }
+    OK "Dependencias integras (keyring/pywin32-ctypes presentes)."
 }
 
 if (-not $SkipTauri) {

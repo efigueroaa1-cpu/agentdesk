@@ -19,6 +19,13 @@ bcrypt>=5.0
 PyJWT>=2.13
 cryptography>=49.0
 
+# Almacen seguro de API keys en Windows Credential Manager (core/key_vault.py,
+# ADR-0028). keyring es opcional en runtime (degrada al vault cifrado), pero el
+# BUILD del instalador debe empaquetarlo -> pin estricto para que pip-compile no
+# lo pierda (antes solo vivia en requirements.txt, sin respaldo en el .in).
+keyring==25.5.0
+pywin32-ctypes>=0.2.3      # backend keyring.backends.Windows (Credential Manager)
+
 # â”€â”€ Proveedores LLM â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 google-genai>=2.9
 openai>=2.44

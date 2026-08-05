@@ -52,9 +52,16 @@ if ($tags.Count -gt 0) {
 }
 
 # ── Check 2: suite de seguridad ────────────────────────────────────────────────
+# EAP=Continue SOLO alrededor de la llamada nativa: en PS 5.1 con EAP=Stop, el
+# stderr de python (p.ej. un DeprecationWarning benigno de una lib) se envuelve
+# como NativeCommandError terminante y aborta el gate ANTES de leer el exit code
+# real -> falso fallo. El veredicto se decide por $LASTEXITCODE, no por stderr.
 Write-Host "`n[2/4] Ejecutando test_security.py..." -ForegroundColor Cyan
+$eapPrev = $ErrorActionPreference; $ErrorActionPreference = "Continue"
 python -m unittest test_security -v
-if ($LASTEXITCODE -ne 0) {
+$codigoSeguridad = $LASTEXITCODE
+$ErrorActionPreference = $eapPrev
+if ($codigoSeguridad -ne 0) {
     Write-Host "  BLOQUEADO: la suite de seguridad falló." -ForegroundColor Red
     $fallos += "test_security.py con pruebas fallidas."
 } else {
@@ -75,8 +82,11 @@ if ($residuos.Count -gt 0) {
 
 # ── Check 4: Guardián de Arquitectura hexagonal (ADR-0002) ─────────────────────
 Write-Host "`n[4/4] Ejecutando scripts/gate.py (arquitectura hexagonal)..." -ForegroundColor Cyan
+$eapPrev = $ErrorActionPreference; $ErrorActionPreference = "Continue"
 python scripts\gate.py
-if ($LASTEXITCODE -ne 0) {
+$codigoArq = $LASTEXITCODE
+$ErrorActionPreference = $eapPrev
+if ($codigoArq -ne 0) {
     Write-Host "  BLOQUEADO: violaciones de arquitectura." -ForegroundColor Red
     $fallos += "scripts/gate.py detectó violaciones de arquitectura."
 } else {
