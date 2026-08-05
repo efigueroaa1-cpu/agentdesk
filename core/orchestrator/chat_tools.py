@@ -12,6 +12,7 @@ test_delegation, harnesses/test_memoria_en_realizar_tarea.
 """
 import json
 import logging
+import os
 
 # Logger bajo "core.orchestrator" (no __name__): el codigo extraido de
 # core/orchestrator.py siempre logueo ahi; dashboards y auditoria forense

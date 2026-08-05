@@ -18,6 +18,7 @@ Uso:  python scripts/gate.py     (lo invoca gate.ps1 como paso de arquitectura)
 """
 from __future__ import annotations
 
+import ast
 import os
 import re
 import subprocess
@@ -217,7 +218,10 @@ LEGACY_OVERSIZE: dict[str, int] = {
     # subio 1397->1399 (2026-07-30): suite test_ollama_single_watchdog gateada (v1.3-GOLD)
     # subio 1399->1402 (2026-07-30): suite test_checkpoint_resume gateada
     # (reanudacion de corrida, Soberania de Datos) + esta justificacion
-    "scripts/gate.py":                                                  1402,
+    # subio 1402->1454 (2026-08-04): guard [NAMEERR] check_nombres_no_importados
+    # (AST) — caza modulo stdlib usado como M. sin importar M en ningun scope;
+    # hallazgo real de 4 NameError latentes (chat_tools x2, bridge, tools/chile)
+    "scripts/gate.py":                                                  1457,
     "dashboard.py":                                                     1257,
     # ui/dashboard subio 1257->1271 (2026-07-19): titulo dinamico del header
     # (_titulo_app: etiqueta [MODBUS] si AGENTDESK_MODBUS_HOST esta definida)
@@ -321,6 +325,56 @@ def check_imports(archivos: list[str]) -> list[str]:
             for _, patron, motivo in reglas:
                 if patron.search(linea):
                     errores.append(f"  [IMPORT]  {rel}:{n}: {linea.strip()[:80]}  <- {motivo}")
+    return errores
+
+
+# Guard de NameError (2026-08-04): un módulo stdlib usado como `M.<attr>` sin
+# `import M` en NINGÚN scope revienta en runtime (NameError) sin que ninguna
+# prueba estática lo vea — el compilador de Python no resuelve nombres. Causa
+# real hallada: chat_tools.py/chat_tools_stream.py usaban os.environ.get sin
+# importar os (chat con proveedores cloud caía), bridge.py usaba asyncio.* en
+# el despacho de comandos de agente, y tools/chile.py datetime.now(). El AST
+# reconoce imports locales (import dentro de función), así que _state.py —que
+# importa os dentro de su initializer— no da falso positivo.
+MODULOS_STDLIB_VIGILADOS = frozenset({
+    "os", "sys", "re", "json", "time", "math", "shutil", "subprocess",
+    "hashlib", "socket", "base64", "datetime", "asyncio", "pathlib",
+})
+
+
+def check_nombres_no_importados(archivos: list[str]) -> list[str]:
+    """[NAMEERR] módulo stdlib usado como `M.` sin importar M en ningún scope."""
+    errores = []
+    for rel in archivos:
+        if not rel.endswith(".py") or not rel.startswith("core/"):
+            continue
+        try:
+            arbol = ast.parse(
+                (RAIZ / rel).read_text(encoding="utf-8-sig", errors="replace"), rel)
+        except SyntaxError:
+            continue
+        importados: set[str] = set()
+        asignados:  set[str] = set()
+        usados:     dict[str, int] = {}
+        for nodo in ast.walk(arbol):
+            if isinstance(nodo, ast.Import):
+                for a in nodo.names:
+                    importados.add((a.asname or a.name).split(".")[0])
+            elif isinstance(nodo, ast.ImportFrom):
+                for a in nodo.names:
+                    importados.add(a.asname or a.name)
+            elif isinstance(nodo, ast.Name) and isinstance(nodo.ctx, ast.Store):
+                asignados.add(nodo.id)
+            elif (isinstance(nodo, ast.Attribute)
+                  and isinstance(nodo.value, ast.Name)
+                  and isinstance(nodo.value.ctx, ast.Load)
+                  and nodo.value.id in MODULOS_STDLIB_VIGILADOS):
+                usados.setdefault(nodo.value.id, nodo.lineno)
+        for mod, linea in sorted(usados.items()):
+            if mod not in importados and mod not in asignados:
+                errores.append(
+                    f"  [NAMEERR] {rel}:{linea}: usa '{mod}.' sin importar "
+                    f"'{mod}' (NameError en runtime)")
     return errores
 
 
@@ -1332,6 +1386,7 @@ REGLAS: list[Regla] = [
     Regla("TAGS",                   check_tags,                    usa_archivos=True),
     Regla("TAMANO",                 check_tamano,                  usa_archivos=True),
     Regla("IMPORTS",                check_imports,                 usa_archivos=True),
+    Regla("NAMEERR-no-importado",   check_nombres_no_importados,   usa_archivos=True),
     Regla("EXEC-peligrosa",         check_ejecucion_peligrosa,     usa_archivos=True),
     Regla("PESADO-sincrono",        check_pesado_sincrono,         usa_archivos=True),
     Regla("BOOT-validation",        check_boot_validation),

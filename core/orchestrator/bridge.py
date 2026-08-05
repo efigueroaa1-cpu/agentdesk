@@ -11,6 +11,7 @@ CRUD del RegistryMixin (self.reload_agente/crear/eliminar/actualizar).
 Las constantes de comando vienen de core.command_bridge (sin ciclo).
 Cubierto por tests/scale/test_resource_guard.py.
 """
+import asyncio
 import logging
 
 from core.command_bridge import (
