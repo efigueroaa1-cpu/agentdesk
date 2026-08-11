@@ -1,4 +1,4 @@
-﻿# AgentDesk â€” dependencias Python (Fase 7, higiene de dependencias)
+# AgentDesk â€” dependencias Python (Fase 7, higiene de dependencias)
 # Instalar:        pip install -r requirements.in (fuente) -> pip-compile -> requirements.txt (lockfile)
 # Nota: PyInstaller empaqueta esto en el build de escritorio (build_all.ps1).
 
@@ -23,7 +23,7 @@ cryptography>=49.0
 # ADR-0028). keyring es opcional en runtime (degrada al vault cifrado), pero el
 # BUILD del instalador debe empaquetarlo -> pin estricto para que pip-compile no
 # lo pierda (antes solo vivia en requirements.txt, sin respaldo en el .in).
-keyring==25.5.0
+keyring==25.7.0
 pywin32-ctypes>=0.2.3      # backend keyring.backends.Windows (Credential Manager)
 
 # â”€â”€ Proveedores LLM â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
